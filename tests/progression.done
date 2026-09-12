@@ -1,0 +1,10 @@
+Completed docs/save.js and docs/audio.js.
+
+Save: version 2 whitelist sanitation; safe corrupt, blocked-storage and v1 fallback/migration; separate per-vehicle upgrade levels; purchase validation; stage-by-vehicle records; expedition totals; XP/levels; 18 achievements; 9 cosmetic unlocks; reset; single-write finishRun crediting.
+Audio: gesture-unlocked WebAudio synthesis; engine RPM, bubbles, pickups, oxygen, chest, ballast, crash, tricks, level-ups, clicks, low-oxygen heartbeat; mute; pause silence; 28 transient voice cap and onended disposal.
+
+Validation: node --check docs/save.js and docs/audio.js passed. node tests/progression.test.js passed all 11 suites covering defaults, corrupt/malformed/future saves, blocked storage, v1 migration, prototype safety, purchasing, all 12 upgrade levels, exact economy arithmetic, single-write finish credit, records, all achievement predicates, XP thresholds/cosmetics, nonfinite run input, gesture gating and bounded audio voice cleanup.
+
+Integration notes: storage key abyss-racer-save; finishRun also returns newCosmetics; cosmetic IDs aqua/amber/violet/rose/emerald/ice and bubbles/sparkles/plankton. maxFlips is the best backflip count in one jump. Save.checkAchievements awards newly earned rewards in memory; callers outside finishRun/purchases should call save() afterward. No known blocking limitations. Audio sound quality still requires actual playback; automated audio tests use mock WebAudio nodes.
+
+Integration review update: docs/audio.js now resumes Safari-style interrupted contexts and begins the heartbeat at the same <25% threshold as the HUD. Save.reset removes canonical plus legacy saves before writing defaults, preventing old progress from returning if that final write fails. Added regressions for interrupted-context resume, pause/engine mute, RPM change, warning timing, and failed-write reset. All 13 progression/audio suites pass; audio.js and save.js syntax checks pass. Reported game.js frame transition engine restart bug and exact oxygen-unit wording to parent for integration fixes.

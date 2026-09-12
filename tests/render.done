@@ -1,0 +1,5 @@
+Renderer implemented in docs/render.js.
+PASS node --check docs/render.js.
+PASS local file headless Chromium renderer smoke: all 30 stage/vehicle combinations, all four pickup types, effects, text, headlights, thumbnails, mobile 390x844 viewport.
+PASS desktop 1440x900 screenshot inspected: underwater parallax, rays, fish, coral, sand, pilot, hull, wheel spokes and suspension visible.
+No network calls, external art, or external libraries. Ambient objects are deterministic and bounded.

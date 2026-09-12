@@ -1,0 +1,5 @@
+codex_run*.log
+PROMPT.md
+run_codex.sh
+DONE.txt
+.playwright*

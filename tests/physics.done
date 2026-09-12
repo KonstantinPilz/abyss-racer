@@ -1,0 +1,13 @@
+PASS: node docs/selftest.js — 15/15 checks.
+PASS: Chromium 1217 headless local file:// selftest.html — 15/15 checks; body data-result="pass".
+PASS: node --check for data.js, terrain.js, physics.js, selftest.js.
+PASS: 60 simulated seconds at 1/120 s on all six stages, no non-finite chassis/wheel fields or thrown steps.
+PASS: Coral Reef starter full-throttle distance 254.3 m (>200 m).
+PASS: Flat-ground settled drift over 60 seconds 0.000000 px.
+PASS: All 30 stage × vehicle high-speed landing combinations at 1600 px/s horizontal and 1000 px/s downward; maximum surface penetration 0.037 px.
+PASS: Engine upgrade changes 3-second speed 216.4 to 315.1 px/s; thrust, suspension, tire, oxygen, and ballast upgrade checks.
+PASS: Oxygen depletion, upside-down dome impact, burst oxygen cost/cooldown, terrain deterministic seeding/seams/pruning, stage differences, vents, ice ceiling, oversized frame clamp.
+PASS: Overturned hull contact reported separately from tire contact; ballast takeoff clears contact flags.
+PASS: Ramp-lip query positions match deterministic terrain generation.
+PASS: Starter Reef full-throttle first terminal crash at 9.967 seconds / 223.0 m, without clearing crashes.
+PASS: Starter Reef gas-on-ground/coast-in-air controller survives 60 seconds / 1599.1 m, without refilling oxygen or clearing crashes.

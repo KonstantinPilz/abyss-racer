@@ -1,0 +1,2 @@
+PASS complete Chromium file:// desktop/mobile integration; controls, audio initialization, garage tabs, purchases, upgrades, save reload, reset, resize/orientation, zero app console errors/warnings or external network requests. Screenshots inspected separately.
+PASS final screenshots personally inspected at desktop, portrait, landscape, and 320×568. Native devicePixelRatio 3 canvas backing verified in Chromium.

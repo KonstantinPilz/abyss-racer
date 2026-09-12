@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#061f2b">
+  <meta name="description" content="Drive a little deep-sea rover across an endless ocean floor. Collect pearls, master floaty jumps, and explore six underwater worlds.">
+  <title>Abyss Racer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b2935'/%3E%3Cpath d='M20 31a12 12 0 0 1 24 0' fill='%2385e7de'/%3E%3Crect x='10' y='30' width='44' height='18' rx='8' fill='%23ffb05c'/%3E%3Ccircle cx='20' cy='48' r='8' fill='%23051b26' stroke='%23c4d4d2' stroke-width='4'/%3E%3Ccircle cx='46' cy='48' r='8' fill='%23051b26' stroke='%23c4d4d2' stroke-width='4'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="ocean" aria-label="Underwater racing game. Use the keyboard or on-screen pedals to drive."></canvas>
+  <div id="vignette" aria-hidden="true"></div>
+  <header id="topbar">
+    <button id="brand" class="brand" aria-label="Abyss Racer home"><span class="brand-mark">◒</span><span>ABYSS<span class="brand-light">RACER</span></span><span class="edition">DEEP SEA MOTORSPORT</span></button>
+    <div class="top-actions"><span class="wallet" title="Pearls available to spend"><span class="pearl-icon">●</span><b id="wallet">0</b><span class="wallet-label">PEARLS</span></span><button id="help-button" class="icon-button" aria-label="How to play">?</button><button id="mute-button" class="icon-button" aria-label="Mute sound" aria-pressed="false">♫</button></div>
+  </header>
+
+  <main id="screens">
+    <section id="title-screen" class="screen" aria-labelledby="title-heading">
+      <div class="hero"><div class="eyebrow"><i></i> ADVENTURE BELOW THE SURFACE</div><h1 id="title-heading">ABYSS<br><span>RACER</span><span class="title-dot">.</span></h1><p>A little rover. An endless ocean.<br>How far can you go?</p><div class="hero-actions"><button id="enter-garage" class="button primary">LET’S DIVE IN <span>↗</span></button><button id="title-help" class="text-button">How to play <span>→</span></button></div><div class="hero-note"><span class="keycap">→</span> DRIVE <span class="note-dot">·</span> <span class="keycap">SPACE</span> RISE <span class="note-dot">·</span> FIND YOUR FLOW</div></div>
+      <div class="expedition-label" aria-hidden="true"><span class="tiny-label">EXPEDITION 001</span><strong>CORAL REEF</strong><span><i class="live-dot"></i> READY FOR DESCENT</span></div>
+      <div class="title-bottom"><div class="discovery"><span class="compass">✳</span><div><b>There’s a whole world down here.</b><span>6 ocean worlds <i> / </i> 5 unique rides <i> / </i> Endless seabed</span></div></div><div class="personal-best"><span class="tiny-label">YOUR DEEPEST RUN</span><b id="title-best">0 <small>m</small></b></div></div>
+    </section>
+
+    <section id="garage-screen" class="screen" hidden aria-labelledby="garage-heading">
+      <div class="garage-shell"><div class="garage-heading"><div><div class="eyebrow">THE DIVE GARAGE</div><h2 id="garage-heading">Gear up. Go further.</h2></div><div class="level-block"><span id="level-label">DIVER LEVEL 1</span><div class="progress-track"><i id="level-fill"></i></div><small id="level-progress">0 / 275 XP</small></div></div>
+      <nav class="tabs" role="tablist" aria-label="Garage"><button id="tab-vehicles" role="tab" aria-selected="true" aria-controls="garage-content" data-tab="vehicles">Vehicles</button><button id="tab-upgrades" role="tab" aria-selected="false" aria-controls="garage-content" data-tab="upgrades">Upgrades</button><button id="tab-stages" role="tab" aria-selected="false" aria-controls="garage-content" data-tab="stages">Stages</button><button id="tab-achievements" role="tab" aria-selected="false" aria-controls="garage-content" data-tab="achievements">Achievements</button><button id="tab-stats" role="tab" aria-selected="false" aria-controls="garage-content" data-tab="stats">Stats</button></nav>
+      <div id="garage-content" role="tabpanel" aria-labelledby="tab-vehicles" tabindex="0"></div>
+      <div class="launch-dock"><div class="loadout"><span class="status-dot"></span><div><b id="selected-loadout">Reef Rover <span> / </span> Coral Reef</b><small id="loadout-best">BEST 0 m · READY TO EXPLORE</small></div></div><button id="start-run" class="button primary">START DIVE <span>→</span></button></div></div>
+    </section>
+
+    <section id="hud" hidden aria-label="Run instruments">
+      <div class="hud-top"><div class="distance-readout"><span class="tiny-label">DISTANCE</span><strong id="distance">0<small> m</small></strong><span id="run-stage">CORAL REEF</span></div><div class="oxygen-panel" id="oxygen-panel"><div><span>O₂ <b>OXYGEN</b></span><strong id="oxygen-value">100%</strong></div><div class="oxygen-track"><i id="oxygen-fill"></i></div><small id="oxygen-warning">BREATHE EASY. KEEP EXPLORING.</small></div><div class="hud-right"><span class="run-pearls"><span class="pearl-icon">●</span> <b id="run-pearls">0</b></span><button id="pause-button" class="icon-button" aria-label="Pause game">Ⅱ</button></div></div>
+      <div class="depth-meter"><span>DEPTH</span><b id="depth">120 m</b><i></i><span id="speed">0 km/h</span></div>
+      <div class="run-keyboard"><span><kbd>←</kbd> BRAKE</span><span><kbd>→</kbd> THROTTLE</span><span><kbd>SPACE</kbd> BALLAST <b id="ballast-status">READY</b></span></div>
+      <div id="touch-controls"><button id="pedal-brake" class="pedal brake" aria-label="Hold brake or reverse"><span>◀</span>BRAKE</button><button id="pedal-ballast" class="pedal ballast" aria-label="Ballast burst"><span>⇧</span><small id="touch-ballast-label">BALLAST</small></button><button id="pedal-gas" class="pedal gas" aria-label="Hold throttle"><span>▶</span>THROTTLE</button></div>
+    </section>
+
+    <section id="pause-screen" class="screen centered shade" hidden aria-labelledby="pause-heading"><div class="modal-card"><div class="eyebrow">TAKE A BREATHER</div><h2 id="pause-heading">Holding depth.</h2><p>Your expedition is paused.</p><button id="resume-run" class="button primary">KEEP EXPLORING <span>→</span></button><button id="end-run" class="button secondary">End dive & bank pearls</button><small class="muted">P or Esc to resume</small></div></section>
+
+    <section id="gameover-screen" class="screen centered shade" hidden aria-labelledby="gameover-heading"><div class="modal-card result-card"><div class="eyebrow" id="result-reason">EXPEDITION COMPLETE</div><h2 id="gameover-heading">A dive to remember.</h2><div id="new-best" class="best-badge" hidden>✦ NEW PERSONAL BEST</div><div class="result-distance" id="result-distance">0 <small>m</small></div><p id="result-location">Coral Reef · Reef Rover</p><div class="result-stats"><div><span>PEARLS EARNED</span><b id="result-pearls">+0</b></div><div><span>EXPERIENCE</span><b id="result-xp">+0 XP</b></div><div><span>AIR TIME</span><b id="result-air">0.0 s</b></div></div><p id="result-rewards" class="reward-line"></p><div class="result-actions"><button id="retry" class="button primary">DIVE AGAIN <span>↻</span></button><button id="back-garage" class="button secondary">GARAGE</button></div></div></section>
+  </main>
+
+  <div id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+  <footer id="footer"><span>Built by Konstantin's AI agents</span><span>STAY CURIOUS. DIVE DEEPER.</span></footer>
+  <div id="dialog-overlay" class="dialog-overlay" hidden><section class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="dialog-heading" tabindex="-1"><button id="dialog-close" class="icon-button close-button" aria-label="Close dialog">×</button><div id="dialog-content"></div></section></div>
+  <script src="data.js"></script><script src="terrain.js"></script><script src="physics.js"></script><script src="save.js"></script><script src="audio.js"></script><script src="render.js"></script><script src="game.js"></script>
+</body>
+</html>

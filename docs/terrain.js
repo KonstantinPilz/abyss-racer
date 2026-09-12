@@ -71,10 +71,12 @@
       return 87 + noise(x / 490, this.seed + 57) * 35 + Math.sin(x / 116) * 12;
     }
     vent(x) {
-      if (this.stage.id !== 'volcanic' || x < 550) return 0;
+      // Runs start at x=100; leave the first 220 m free of updrafts.
+      if (this.stage.id !== 'volcanic' || x < 2300) return 0;
       const position = ((x - 600) % 960 + 960) % 960;
       const d = Math.abs(position - 70);
-      return d < 70 ? Math.cos(d / 70 * Math.PI / 2) * 465 : 0;
+      const strength = 1 + 0.5 * Math.min(1, Math.max(0, (x - 2300) / 12800));
+      return d < 70 ? Math.cos(d / 70 * Math.PI / 2) * 232.5 * strength : 0;
     }
     maintain(x) {
       const center = Math.floor(x / CHUNK_SIZE);

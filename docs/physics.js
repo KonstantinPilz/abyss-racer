@@ -5,6 +5,7 @@
   const DOME_Y = -18;
   const DOME_RADIUS = 20;
   const SOLVER_ITERATIONS = 5;
+  const INVERTED_COS = Math.cos(95 * Math.PI / 180);
   const clamp = function (value, low, high) { return Math.max(low, Math.min(high, value)); };
 
   class Rover {
@@ -31,6 +32,8 @@
       this.cooldown = 0; this.grounded = true; this.bodyGrounded = false; this.crashed = '';
       this.impact = 0; this.burstFired = false;
       this.sleepTime = 0; this.sleeping = false;
+      this.contactTime = 0; this.domeContacts = []; this.strandedTime = 0;
+      this.invertedDomeContact = false;
       this.savePrevious();
     }
     gravity() { return this.terrain.stage.gravity * (1 - this.stats.buoyancy); }
@@ -40,6 +43,7 @@
     step(input, dt) {
       this.savePrevious();
       this.impact = 0; this.burstFired = false; this.bodyGrounded = false;
+      this.invertedDomeContact = false;
       if (this.crashed) return;
       dt = clamp(Number(dt) || AR.FIXED_DT, 0, 1 / 30);
       input = input || {};
@@ -55,7 +59,7 @@
       if (input.throttle || input.brake || this.burstFired || this.terrain.vent(this.x) > 0) {
         this.sleeping = false; this.sleepTime = 0;
       }
-      if (this.sleeping) return;
+      if (this.sleeping) { this.updateContactTimers(dt); return; }
       // Two normal substeps keep the suspension stiff without explicit-Euler
       // instability. Faster injected test velocities receive additional steps,
       // so no wheel travels farther than approximately 6 px before collision.
@@ -64,6 +68,7 @@
       const h = dt / count;
       for (let sub = 0; sub < count; sub++) this.substep(input, h);
       this.grounded = this.wheels.some(function (w) { return w.grounded; });
+      this.updateContactTimers(dt);
       const quiet = Math.hypot(this.vx, this.vy) < 0.9 && Math.abs(this.omega) < 0.025 && this.wheels.every(function (w) { return w.grounded && Math.hypot(w.vx, w.vy) < 1.2; });
       if (!input.throttle && !input.brake && quiet) this.sleepTime += dt;
       else this.sleepTime = 0;
@@ -73,6 +78,25 @@
         this.sleeping = true; this.vx = this.vy = this.omega = 0;
         this.wheels.forEach(function (w) { w.vx = w.vy = w.omega = 0; });
       }
+    }
+    updateContactTimers(dt) {
+      const start = this.contactTime;
+      this.contactTime += dt;
+      const cutoff = this.contactTime - 1.5;
+      // Merge adjacent contact intervals, then clip to the sliding window.
+      // Count simulated time once per step, never once per solver iteration.
+      if (this.invertedDomeContact) {
+        const last = this.domeContacts[this.domeContacts.length - 1];
+        if (last && last.end === start) last.end = this.contactTime;
+        else this.domeContacts.push({ start: start, end: this.contactTime });
+      }
+      while (this.domeContacts.length && this.domeContacts[0].end <= cutoff) this.domeContacts.shift();
+      if (this.domeContacts.length) this.domeContacts[0].start = Math.max(cutoff, this.domeContacts[0].start);
+      const domeTime = this.domeContacts.reduce(function (total, contact) { return total + contact.end - contact.start; }, 0);
+      const wedged = this.bodyGrounded && !this.wheels.some(function (w) { return w.grounded; }) && Math.abs(this.vx) < 15;
+      this.strandedTime = wedged ? this.strandedTime + dt : 0;
+      if (!this.crashed && domeTime > 0.6 + 1e-9) this.crashed = 'Hull crushed';
+      if (!this.crashed && this.strandedTime > 2.5 + 1e-9) this.crashed = 'Stranded';
     }
     substep(input, dt) {
       const stats = this.stats;
@@ -87,7 +111,7 @@
       let torque = -this.omega * this.inertia * (this.grounded ? 1.3 : 0.62);
       const control = (input.throttle ? 1 : 0) - (input.brake ? 1 : 0);
       if (control) {
-        const airControl = stats.id === 'bike' ? 5.5 : stats.id === 'truck' ? 3.1 : 4.25;
+        const airControl = (stats.id === 'bike' ? 5.5 : stats.id === 'truck' ? 3.1 : 4.25) * 0.8;
         if (!this.grounded) torque -= control * this.inertia * airControl;
         // A small real propeller force also permits recovery on slippery ice.
         forceX += control * this.mass * (12 + (stats.thrustLevel || 0) * 2.3) * c;
@@ -102,7 +126,9 @@
         const springForce = clamp(stats.spring * (stats.restLength - length) - stats.damping * rate, -this.mass * 3500, this.mass * 3500);
         const fx = springForce * downX, fy = springForce * downY;
         w.vx += (fx / this.wheelMass - w.vx * 0.075) * dt;
-        w.vy += (fy / this.wheelMass + gravity - vent * ventReach * 0.65 - w.vy * 0.16) * dt;
+        // Apply the same vent acceleration to the chassis and both wheels so
+        // the updraft cannot create differential lift or pitch the suspension.
+        w.vy += (fy / this.wheelMass + gravity - vent * ventReach - w.vy * 0.16) * dt;
         forceX -= fx; forceY -= fy;
         torque -= rx * fy - ry * fx;
         if (control) {
@@ -194,6 +220,7 @@
       const ceiling = this.terrain.ceiling(x);
       const ceilingPenetration = ceiling - (y - radius);
       if (ceilingPenetration > 0) this.resolveBodyContact(rx, ry, 0, 1, ceilingPenetration, dome);
+      if (dome && c < INVERTED_COS && (groundPenetration > 0 || ceilingPenetration > 0)) this.invertedDomeContact = true;
     }
     resolveBodyContact(rx, ry, nx, ny, penetration, vulnerable) {
       // Tire contact and hull contact are separate: an overturned rover can

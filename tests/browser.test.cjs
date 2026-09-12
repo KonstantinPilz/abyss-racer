@@ -7,7 +7,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const assert = (condition, message) => { if (!condition) throw new Error(message); console.log('PASS ' + message); };
 let activeBrowser;
 (async () => {
-  const browser = activeBrowser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-software-rasterizer'], timeout: 15000 });
+  const browser = activeBrowser = await puppeteer.launch({ executablePath, headless: true, pipe: true, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-software-rasterizer'], timeout: 15000 });
   const page = await browser.newPage();
   const issues = [], external = [];
   page.on('pageerror', error => issues.push(error.message));

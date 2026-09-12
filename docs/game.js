@@ -541,5 +541,5 @@
   refreshWallet();
   frameRequest = requestAnimationFrame(frame);
   // Read-only inspection hook for browser smoke tests and troubleshooting.
-  AR.inspect = () => ({ state, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
+  AR.inspect = () => ({ state, angle: scene.rover.angle, omega: scene.rover.omega, vx: scene.rover.vx, vy: scene.rover.vy, grounded: scene.rover.grounded, bodyGrounded: scene.rover.bodyGrounded, sleeping: !!scene.rover.sleeping, terrainY: scene.terrain ? scene.terrain.height(scene.rover.x) : null, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
 })();

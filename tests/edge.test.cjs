@@ -7,7 +7,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const assert = (condition, message) => { if (!condition) throw new Error(message); console.log('PASS ' + message); };
 let browser;
 (async () => {
-  browser = await puppeteer.launch({ executablePath, headless: true, args: ['--no-sandbox','--disable-gpu','--disable-dev-shm-usage'], timeout: 15000 });
+  browser = await puppeteer.launch({ executablePath, headless: true, pipe: true, args: ['--no-sandbox','--disable-gpu','--disable-dev-shm-usage'], timeout: 15000 });
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -77,11 +77,45 @@ let browser;
   await delay(300);
   assert(await page.evaluate(() => AR.inspect().state) === 'GAMEOVER', 'A real upside-down dome impact ends the run');
   assert(await page.$eval('#result-reason', n => n.textContent) === 'HULL CRUSHED', 'Hull-crushed reason reaches summary');
+  await page.click('#retry');
+  const domeRest = await page.evaluate(() => {
+    const r = window.testRover;
+    // Set up a real, motionless inverted contact. Advance only production
+    // physics here so the deadline is simulated time, independent of CI speed.
+    r.terrain.height = () => 350; r.terrain.slope = () => 0;
+    r.terrain.ceiling = () => -Infinity; r.terrain.vent = () => 0;
+    r.sleeping = false; r.sleepTime = 0;
+    r.x = 100; r.y = 350 - 18 - 20; r.angle = Math.PI;
+    r.vx = r.vy = r.omega = 0; r.grounded = false; r.bodyGrounded = false;
+    r.wheels.forEach(w => {
+      w.x = r.x - w.side * r.stats.wheelbase / 2;
+      w.y = r.y - r.stats.restLength - 8;
+      w.vx = w.vy = w.omega = 0; w.grounded = false;
+    });
+    let steps = 0, maxImpact = 0, firstStep;
+    while (steps < Math.round(1 / AR.FIXED_DT) && !r.crashed) {
+      r.step({}, AR.FIXED_DT);
+      steps++;
+      maxImpact = Math.max(maxImpact, r.impact);
+      if (steps === 1) firstStep = {
+        crashed: r.crashed, bodyGrounded: r.bodyGrounded,
+        wheelsOffGround: r.wheels.every(w => !w.grounded)
+      };
+    }
+    return { seconds: steps * AR.FIXED_DT, crashed: r.crashed, maxImpact, firstStep };
+  });
+  assert(domeRest.firstStep.bodyGrounded && domeRest.firstStep.wheelsOffGround && !domeRest.firstStep.crashed,
+    'Motionless inverted setup rests on its dome without an instant crash');
+  assert(domeRest.maxImpact < 82, 'Gentle dome-rest regression never reaches the hard-impact threshold');
+  assert(domeRest.crashed === 'Hull crushed' && domeRest.seconds > .6 && domeRest.seconds <= 1,
+    'Gentle inverted dome rest ends within 1 simulated second: ' + domeRest.seconds.toFixed(3) + ' s');
+  await page.waitForFunction(() => AR.inspect().state === 'GAMEOVER', { timeout: 2000 });
+  assert(await page.$eval('#result-reason', n => n.textContent) === 'HULL CRUSHED', 'Gentle dome-rest death reaches the real game-over summary');
   await page.click('#back-garage');
   await page.click('#mute-button');
   await page.reload();
   assert(await page.$eval('#mute-button', n => n.getAttribute('aria-pressed')) === 'true', 'Mute preference survives reload');
   assert(errors.length === 0, 'Edge cases produce no application console errors/warnings: ' + errors.join('; '));
-  fs.writeFileSync(path.join(__dirname,'edge.done'), 'PASS controlled browser visibility hidden/resume, capped timestamp gap, flip awards, no grounded airtime farming, natural oxygen and hull deaths, game-over audio silence, mute persistence; zero app console errors/warnings.\n');
+  fs.writeFileSync(path.join(__dirname,'edge.done'), 'PASS controlled browser visibility hidden/resume, capped timestamp gap, flip awards, no grounded airtime farming, natural oxygen and hard/gentle hull deaths, gentle inverted dome rest ends within 1 simulated second, game-over audio silence, mute persistence; zero app console errors/warnings.\n');
   await browser.close();
 })().catch(async error => { console.error(error); if (browser) await browser.close(); process.exit(1); });

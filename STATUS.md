@@ -12,3 +12,11 @@ Completed. Play `docs/index.html` directly or serve `docs/` with GitHub Pages. N
 Evidence: `tests/physics.done`, `tests/render.done`, `tests/progression.done`, `tests/browser.done`, `tests/edge.done`; executable tests in `docs/selftest.js`, `tests/progression.test.js`, `tests/browser.test.cjs`, `tests/edge.test.cjs`.
 
 Remaining platform checks: actual Firefox/Safari, physical multitouch devices, human audio listening. Headless visibility is simulated explicitly. No work remains in flight; completion monitoring ended after all artifacts passed. No deployment performed.
+
+## Fix round 1
+
+Complete. Gentle inverted dome contact now causes Hull crushed after more than 0.6 cumulative seconds in a rolling 1.5-second window; hard impacts remain immediately fatal. A stationary hull wedge with both wheels unsupported causes Stranded after 2.5 seconds. Brief contact can recover. Vents start after 220 m, use half the original base lift, scale to ×1.5 by 1,500 m, and accelerate chassis/wheels equally. Air control is 20% gentler; full backflips and bonuses remain possible.
+
+Level-0 Reef Rover, 40 simulated seconds with the QA pulse/brake driver, no crashes or refills: Reef **977.5 m**, Kelp **916.5 m**, Wreck **758.8 m**, Volcanic **815.9 m**, Ice **886.1 m**, Abyss **791.0 m**. First volcanic vent airtime: **1.392 s**. Gentle dome-rest death: **0.608 s** at 120 Hz; stranded death: **2.508 s**. Ramp backflip and upright landing: **4.242 s** hang.
+
+Validation: **27/27** shared physics checks in Node and real headless Chromium; **13/13** progression/audio suites; all JS/CJS syntax checks; both browser integration and edge suites pass over port-free file://. No app console errors/warnings or external requests. Existing filenames and all QA fields in AR.inspect are preserved. Details: `FIX1_DONE.txt`. No work remains in flight.

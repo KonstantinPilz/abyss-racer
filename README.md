@@ -14,7 +14,9 @@ Open **[docs/index.html](docs/index.html)** directly in a browser. No installati
 | Pause / resume | P or Escape | Pause button |
 | Mute / unmute | M | Sound button in menus |
 
-Ease off the gas over crests. Tap brake in the air to lower the nose before landing. Ballast pushes upward, uses 8 oxygen units, and must recharge. Holding its control fires another burst when the cooldown expires. A hard dome impact against the seabed or ice ceiling crushes the hull; an empty oxygen reserve also ends the run. Hidden tabs pause automatically and require Resume when you return.
+Ease off the gas over crests. Tap brake in the air to lower the nose before landing. Ballast pushes upward, uses 8 oxygen units, and must recharge. Holding its control fires another burst when the cooldown expires.
+
+A hard dome impact against the seabed or ice ceiling immediately ends the run with **Hull crushed**. Gentle dome contact also crushes the hull when the chassis is inverted (its angle wrapped to ±180° exceeds 95° in magnitude) for more than 0.6 seconds of contact within any 1.5-second window. Brief brushes allow flip recovery. **Stranded** ends a run after more than 2.5 continuous seconds with the hull supported, both wheels off the ground, and horizontal speed below 15 px/s (1.5 m/s). An empty oxygen reserve also ends the run. Hidden tabs pause automatically and require Resume when you return.
 
 Mouse, keyboard, and touch work in the menus. Garage tabs support arrow keys and Home/End; dialogs trap keyboard focus and close with Escape. Touch pedals support simultaneous pointers and release on cancellation or focus loss.
 
@@ -23,7 +25,7 @@ Mouse, keyboard, and touch work in the menus. Garage tabs support arrow keys and
 1. **Coral Reef:** gentle hills, coral gardens, and surface light.
 2. **Kelp Forest:** large swells and tall kelp.
 3. **Shipwreck Graveyard:** broken hulls, exposed rocks, and more frequent ramps.
-4. **Volcanic Vents:** volcanic ridges and thermal updrafts.
+4. **Volcanic Vents:** volcanic ridges and thermal updrafts, with no active vents in the first 220 m (the first begins at 242 m). Base lift is halved; it scales gradually from ×1.0 at 220 m to ×1.5 at 1,500 m. Updrafts accelerate the chassis and both wheels equally, without adding pitch torque. The level-0 Reef Rover's first vent jump lasts 1.39 seconds with the QA driver below.
 5. **Ice Shelf:** low-friction ground and a solid ice ceiling.
 6. **Abyssal Trench:** steep terrain, anglerfish, and headlight navigation.
 
@@ -73,19 +75,21 @@ node tests/progression.test.js
 
 Or open **[docs/selftest.html](docs/selftest.html)**. It prints individual PASS/FAIL lines both on the page and in the console. The suite exercises about 60 simulated seconds on every stage, finite state, chassis/wheel terrain and ceiling penetration, starter progression, resting stability, all 30 stage × vehicle high-speed landings, upgrade handling, oxygen, bursts, collisions, seeded terrain and chunk pruning. Stress cases deliberately clear fatal crashes/refill oxygen to continue exercising the solver; separate tests preserve normal game-over behavior.
 
+Fix round 1 adds 40-second runs on all six stages using a level-0 Reef Rover: throttle for 0.9 seconds, coast for 0.3 seconds, and replace throttle with a 0.15-second brake tap whenever airborne and pitched backward beyond 35°; repeat the tap if correction is still needed. These runs preserve crashes and oxygen consumption, with no refills. All six survive the full 40 seconds: Reef 977.5 m, Kelp 916.5 m, Wreck 758.8 m, Volcanic 815.9 m, Ice 886.1 m, and Abyss 791.0 m. Additional checks cover slow inverted ground/ceiling contact, the rolling contact window and recovery, the stranded fallback, vent onset/scaling/equal acceleration, and a completed backflip with a safe landing after a 4.24-second ramp jump. Air pitch control is 20% gentler across all vehicles; flip bonuses remain unchanged.
+
 For a plain Chromium headless check:
 
 ```sh
 chromium --headless=new --no-sandbox --disable-gpu --dump-dom "file://$PWD/docs/selftest.html"
 ```
 
-`tests/edge.test.cjs` additionally checks controlled visibility events, large timestamp gaps, flip scoring, grounded airtime suppression, natural oxygen/crash endings, game-over audio silence, and mute persistence. Headless shell keeps tabs visible, so the visibility test explicitly simulates the browser event.
+`tests/edge.test.cjs` additionally checks controlled visibility events, large timestamp gaps, flip scoring, grounded airtime suppression, natural oxygen/crash endings, a motionless inverted dome rest ending in the real game-over screen after 0.608 simulated seconds, game-over audio silence, and mute persistence. Headless shell keeps tabs visible, so the visibility test explicitly simulates the browser event.
 
-`tests/browser.test.cjs` contains the full desktop/mobile integration smoke test used during development. It uses the environment's existing Puppeteer installation and an existing Chromium binary; those are test tooling only and are **not game dependencies**. Set `ABYSS_CHROME` to choose another installed browser and adjust the Puppeteer require path for a different environment. Tests cover navigation, keyboard driving/ballast/pause, real touch input, purchases, per-vehicle upgrades, reload persistence, reset confirmation, resizing, and application console/network checks. The test uses an isolated temporary browser profile.
+`tests/browser.test.cjs` contains the full desktop/mobile integration smoke test used during development. It uses the environment's existing Puppeteer installation and an existing Chromium binary; those are test tooling only and are **not game dependencies**. Set `ABYSS_CHROME` to choose another installed browser and adjust the Puppeteer require path for a different environment. Tests cover navigation, keyboard driving/ballast/pause, real touch input, purchases, per-vehicle upgrades, reload persistence, reset confirmation, resizing, and application console/network checks. Both browser suites use file URLs, an isolated temporary browser profile, and a debugging pipe, requiring no listening port.
 
 Manual checks: drive over a crest and release throttle; land a ballast jump; try ice traction and volcanic updrafts; flip and counter-pitch; collect every pickup type; compare upgraded handling; mute and resume; rotate a phone; background and restore the tab. Inspect low-oxygen pulse/heartbeat and the summary's extra reward line.
 
-Validation completed: 15/15 physics checks in Node and Chromium; 13/13 progression/audio suites; desktop/mobile integration and targeted browser edge checks. Settled motion was 0 pixels, maximum tested collision penetration was 0.037 pixels, and beginner controls travelled 1,599 m in 60 seconds.
+Validation completed after fix round 1: 27/27 physics checks in Node and Chromium; 13/13 progression/audio suites; desktop/mobile integration and targeted browser edge checks; syntax checks on every JS/CJS file. Settled motion was 0 pixels, maximum tested collision penetration was 0.017 pixels, and beginner controls travelled 1,599 m in 60 seconds.
 
 Chrome/Chromium desktop and emulated mobile are tested. The implementation uses broadly supported browser APIs and includes Safari's prefixed AudioContext fallback. Firefox, Safari, physical-device multitouch, and audible sound balance still need testing on those actual browsers/devices.
 

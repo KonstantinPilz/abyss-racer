@@ -3,3 +3,6 @@ PROMPT.md
 run_codex.sh
 DONE.txt
 .playwright*
+FIX*.md
+run_codex*.sh
+*_DONE.txt

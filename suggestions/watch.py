@@ -2,7 +2,7 @@
 """Poll the ntfy.sh suggestions topic, log new suggestions, email a receipt, and
 kick off implement.sh when there is new work and no run is in progress.
 Runs from cron every 10 minutes. State lives in suggestions/state.json and inbox.jsonl."""
-import json, os, subprocess, sys, time, urllib.request, html
+import json, os, subprocess, sys, time, urllib.request, fcntl
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TOPIC = open(os.path.join(ROOT, 'topic')).read().strip()
 STATE = os.path.join(ROOT, 'state.json'); INBOX = os.path.join(ROOT, 'inbox.jsonl'); LOCK = os.path.join(ROOT, 'run.lock')
@@ -34,9 +34,15 @@ json.dump(state, open(STATE, 'w'))
 # Launch implementation if there is pending work and nothing is running.
 pending = [json.loads(l) for l in open(INBOX)] if os.path.exists(INBOX) else []
 pending = [e for e in pending if e['status'] == 'new']
-if pending and not os.path.exists(LOCK):
+def run_in_progress():
+    """implement.sh holds an flock on run.lock while running; the file itself persists."""
+    if not os.path.exists(LOCK): return False
+    try:
+        fh = open(LOCK, 'a'); fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB); fcntl.flock(fh, fcntl.LOCK_UN); fh.close(); return False
+    except OSError:
+        return True
+if pending and not run_in_progress():
     print(time.strftime('%F %T'), 'starting implement.sh for', len(pending), 'suggestion(s)')
     subprocess.Popen(['/bin/bash', os.path.join(ROOT, 'implement.sh')], stdout=open(os.path.join(ROOT, 'implement.log'), 'a'), stderr=subprocess.STDOUT, start_new_session=True)
 elif pending:
-    age = time.time() - os.path.getmtime(LOCK)
-    if age > 3 * 3600: print('stale lock removed'); os.remove(LOCK)
+    print(time.strftime('%F %T'), 'run in progress; waiting')

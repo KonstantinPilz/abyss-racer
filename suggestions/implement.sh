@@ -17,7 +17,7 @@ items="\n".join(f"{i+1}. {r['text']}" + (f"  (from {r['title']})" if r.get('titl
 print(tpl.replace('{{SUGGESTIONS}}', items))
 PY
 echo "$(date '+%F %T') run $TS: $(python3 -c "import json;print(len(json.load(open('$S/current.json'))))") suggestion(s)"
-git stash list >/dev/null; git checkout -q -- . ; git clean -fdq docs tests
+if [ -n "$(git status --porcelain)" ]; then echo "$(date '+%F %T') working tree is dirty (someone is editing); skipping this tick"; git status --short | head -5; exit 0; fi
 timeout 6000 codex exec -m gpt-6-astra -s workspace-write --skip-git-repo-check \
   -c sandbox_workspace_write.network_access=false -C $ROOT "$(cat $S/BRIEF_$TS.md)" </dev/null 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > $S/codex_$TS.log
 SUMMARY="(no summary written)"; [ -f SUGGESTION_DONE.md ] && SUMMARY=$(cat SUGGESTION_DONE.md)

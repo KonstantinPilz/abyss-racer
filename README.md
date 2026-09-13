@@ -100,18 +100,13 @@ Limitations: the free broker/relay has no availability guarantee, some mobile/co
 
 ## Suggestions
 
-The title’s **Suggestions** button opens a dialog with a required idea/bug textarea and an optional name. Configure it by replacing the comments in `docs/config.js` with your Google Form action and field IDs:
+The title’s **Suggestions** button opens a dialog with a required idea/bug textarea (600 chars max) and an optional name. It POSTs plain text to a public [ntfy.sh](https://ntfy.sh) topic configured in `docs/config.js`:
 
 ```js
-AR.CONFIG = {
-  suggestionsFormAction: 'https://docs.google.com/forms/d/e/YOUR_FORM_ID/formResponse',
-  suggestionsFields: {
-    text: 'entry.111111',
-    name: 'entry.222222',
-    context: 'entry.333333'
-  }
-};
+AR.CONFIG = { suggestionsNtfyTopic: 'abyss-racer-ideas-xxxxxxxxxx', suggestionsMaxLength: 600 };
 ```
+
+The name goes in the ntfy `Title` header; mode, version, viewport and user agent are appended to the message. Without a valid topic the button stays hidden. A watcher on the maintainer’s server polls the topic every 10 minutes and runs the implementation pipeline described in `AGENT_PROCESS.md` (`suggestions/`).
 
 The checked-in file is an empty configuration stub; the button stays hidden unless valid configuration exists. If the optional file is omitted, the button also stays hidden. The form must accept anonymous responses, and all three IDs must match its fields. Submissions POST `FormData` with `mode: 'no-cors'`. Context contains mode, `AR.VERSION`, viewport dimensions and user agent; no other personal information is collected automatically. A page-session cooldown allows one submission every 20 seconds, including across dialog closes/reopens. Fetch completion shows **“Thanks! Sent to the dev agent.”**; a network failure shows a retry message. Google’s opaque response cannot confirm that its form accepted the fields, so verify the configuration with a manual submission after creating your form.
 
@@ -136,7 +131,7 @@ All files are strict-mode plain scripts sharing the `AR` namespace; there are no
 | `docs/online-transport.js` | On-demand PeerJS, broker, STUN/TURN, two channels and redial |
 | `docs/online.js` / `online-ui.js` / `online.css` | Host/guest controllers, lobby, recovery, full-screen phone HUD and pedals |
 | `docs/qr.js` | Self-contained byte-mode QR v1–4 / EC M encoder and canvas output |
-| `docs/config.js` / `suggestions.js` | Optional Google Form configuration and suggestions dialog submission |
+| `docs/config.js` / `suggestions.js` | ntfy.sh suggestions topic and the suggestions dialog |
 | `docs/game.js` | Solo state transitions, shared animation-loop integration, input routing, pickups, tricks, economy integration and DOM updates |
 | `docs/selftest.js` / `selftest.html` | Shared Node/browser deterministic physics checks |
 

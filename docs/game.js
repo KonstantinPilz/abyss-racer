@@ -15,6 +15,7 @@
   const sound = new AR.Audio();
   const renderer = new AR.Renderer($('ocean'));
   const keys = new Set();
+  let pendingBurst = false;
   const pointers = { throttle: new Set(), brake: new Set(), burst: new Set() };
   let state = STATES.TITLE;
   let tab = 'vehicles';
@@ -26,6 +27,18 @@
   let particleClock = 0;
   let dialogFocus = null;
   let scene;
+
+  const versus = new AR.Versus(save, sound, renderer, () => {
+    delete document.body.dataset.versus;
+    scene = createScene('reef', 'rover');
+    refreshWallet();
+    $('enter-versus').focus({ preventScroll: true });
+  });
+  $('enter-versus').addEventListener('click', () => versus.open());
+  const touchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  $('enter-versus').hidden = touchDevice;
+  $('versus-keyboard-note').hidden = !touchDevice;
+  if (new URLSearchParams(window.location.search).get('debug') === '1') AR.debug = versus.debug();
 
   function createScene(stageId, vehicleId) {
     const stage = stageById(stageId);
@@ -275,7 +288,7 @@
     return {
       throttle: pointers.throttle.size > 0 || ['ArrowRight', 'KeyD', 'KeyW'].some(key => keys.has(key)),
       brake: pointers.brake.size > 0 || ['ArrowLeft', 'KeyA', 'KeyS'].some(key => keys.has(key)),
-      burst: pointers.burst.size > 0 || keys.has('Space') || keys.has('ArrowUp')
+      burst: pendingBurst || pointers.burst.size > 0 || keys.has('Space') || keys.has('ArrowUp')
     };
   }
 
@@ -283,6 +296,7 @@
     const controls = input();
     const rover = scene.rover;
     rover.step(controls, dt);
+    pendingBurst = false;
     run.maxX = Math.max(run.maxX, rover.x);
     run.distance = (run.maxX - run.startX) * .1;
     generatePickups();
@@ -378,11 +392,13 @@
 
   function clearInput() {
     keys.clear();
+    pendingBurst = false;
+    versus.clearKeys();
     Object.values(pointers).forEach(set => set.clear());
     document.querySelectorAll('.pedal').forEach(button => button.classList.remove('active'));
   }
 
-  function pause() { if (state === STATES.RUNNING) setState(STATES.PAUSED); }
+  function pause() { if (versus.active) { versus.pause(); return; } if (state === STATES.RUNNING) setState(STATES.PAUSED); }
   function resume() { if (state === STATES.PAUSED) { sound.unlock(); setState(STATES.RUNNING); } }
   function toggleMute() { save.data.settings.muted = !save.data.settings.muted; sound.setMuted(save.data.settings.muted); save.save(); refreshWallet(); }
 
@@ -470,6 +486,7 @@
       sound.unlock();
       button.setPointerCapture(event.pointerId);
       pointers[control].add(event.pointerId);
+      if (control === 'burst') pendingBurst = true;
       button.classList.add('active');
     });
     const release = event => { pointers[control].delete(event.pointerId); if (!pointers[control].size) button.classList.remove('active'); };
@@ -481,6 +498,8 @@
   document.addEventListener('pointerdown', () => sound.unlock(), { passive: true });
   document.addEventListener('click', event => { if (event.target.closest('button') && !event.target.closest('.pedal')) sound.play('click'); });
   window.addEventListener('keydown', event => {
+    if (versus.active) { versus.keydown(event); return; }
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'].includes(event.code) && !event.target.matches('select,input,textarea')) event.preventDefault();
     if (!$('dialog-overlay').hidden) {
       if (event.code === 'Escape') { event.preventDefault(); closeDialog(); }
       if (event.code === 'Tab') {
@@ -496,9 +515,9 @@
     if (event.code === 'KeyM' && !event.repeat) { toggleMute(); return; }
     if (['KeyP', 'Escape'].includes(event.code) && !event.repeat) { event.preventDefault(); if (state === STATES.RUNNING) pause(); else if (state === STATES.PAUSED) resume(); return; }
     if (state !== STATES.RUNNING) return;
-    if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(event.code)) { event.preventDefault(); keys.add(event.code); }
+    if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(event.code)) { event.preventDefault(); keys.add(event.code); if (['Space', 'ArrowUp'].includes(event.code) && !event.repeat) pendingBurst = true; }
   });
-  window.addEventListener('keyup', event => keys.delete(event.code));
+  window.addEventListener('keyup', event => { keys.delete(event.code); versus.keys.delete(event.code); });
   window.addEventListener('blur', () => { clearInput(); pause(); });
   document.addEventListener('visibilitychange', () => {
     clearInput();
@@ -518,6 +537,12 @@
     if (document.hidden) return;
     const dt = previousFrame ? Math.min(.05, Math.max(0, (timestamp - previousFrame) / 1000)) : 0;
     previousFrame = timestamp;
+    if (versus.active) {
+      versus.tick(dt);
+      versus.draw(dt, scene);
+      frameRequest = requestAnimationFrame(frame);
+      return;
+    }
     if (state === STATES.RUNNING) {
       accumulator += dt;
       let steps = 0;
@@ -541,5 +566,5 @@
   refreshWallet();
   frameRequest = requestAnimationFrame(frame);
   // Read-only inspection hook for browser smoke tests and troubleshooting.
-  AR.inspect = () => ({ state, angle: scene.rover.angle, omega: scene.rover.omega, vx: scene.rover.vx, vy: scene.rover.vy, grounded: scene.rover.grounded, bodyGrounded: scene.rover.bodyGrounded, sleeping: !!scene.rover.sleeping, terrainY: scene.terrain ? scene.terrain.height(scene.rover.x) : null, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
+  AR.inspect = () => versus.active ? versus.inspect() : ({ state, angle: scene.rover.angle, omega: scene.rover.omega, vx: scene.rover.vx, vy: scene.rover.vy, grounded: scene.rover.grounded, bodyGrounded: scene.rover.bodyGrounded, sleeping: !!scene.rover.sleeping, terrainY: scene.terrain ? scene.terrain.height(scene.rover.x) : null, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
 })();

@@ -73,6 +73,7 @@
       upgrades: {}, bests: {},
       totalRuns: integer(source.totalRuns),
       totalDistance: number(source.totalDistance),
+      versus: { p1Wins: 0, p2Wins: 0, matches: 0 },
       xp: integer(source.xp, MAX_XP), level: 1, achievements: [],
       totals: { pearls: 0, chests: 0, golden: 0, flips: 0, airtime: 0, bursts: 0, maxFlips: 0 },
       settings: { muted: false, headlight: 'aqua', trail: 'bubbles' }
@@ -93,6 +94,7 @@
     data.level = levelForXP(data.xp);
     if (Array.isArray(source.achievements)) data.achievements = Array.from(new Set(source.achievements.filter(id => AR.ACHIEVEMENTS.some(achievement => achievement.id === id))));
     if (record(source.totals)) for (const key of Object.keys(data.totals)) data.totals[key] = number(source.totals[key]);
+    if (record(source.versus)) for (const key of Object.keys(data.versus)) data.versus[key] = integer(source.versus[key]);
     if (record(source.settings)) {
       data.settings.muted = source.settings.muted === true;
       for (const kind of ['headlight', 'trail']) {
@@ -202,6 +204,17 @@
         newlyEarned.push(achievement);
       }
       return newlyEarned;
+    }
+
+    finishVersus(winnerIndex) {
+      if (winnerIndex !== 0 && winnerIndex !== 1) return false;
+      const tally = this.data.versus;
+      const winner = winnerIndex === 0 ? 'p1Wins' : 'p2Wins';
+      tally[winner] = Math.min(MAX_COUNTER, tally[winner] + 1);
+      tally.matches = Math.min(MAX_COUNTER, tally.matches + 1);
+      // Competitive play never credits solo currency, unlocks, or achievements.
+      this.save();
+      return { p1Wins: tally.p1Wins, p2Wins: tally.p2Wins, matches: tally.matches };
     }
 
     finishRun(summary) {

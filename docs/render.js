@@ -3,6 +3,7 @@
 
   const AR = root.AR = root.AR || {};
   const TAU = Math.PI * 2;
+  const glowSprites = new Map();
   const LIGHTS = { aqua: '#7fffe8', coral: '#ffad91', gold: '#ffe28c', violet: '#c2a6ff', pink: '#ff93df', ice: '#c0f5ff' };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const mix = (a, b, t) => a + (b - a) * t;
@@ -20,15 +21,25 @@
     if (color) { c.fillStyle = color; c.fill(); }
   }
   function glow(c, x, y, r, color, alpha) {
+    let sprite = glowSprites.get(color);
+    if (!sprite) {
+      sprite = document.createElement('canvas'); sprite.width = sprite.height = 128;
+      const paint = sprite.getContext('2d'), gradient = paint.createRadialGradient(64, 64, 0, 64, 64, 64);
+      gradient.addColorStop(0, color); gradient.addColorStop(1, 'transparent');
+      paint.fillStyle = gradient; paint.fillRect(0, 0, 128, 128); glowSprites.set(color, sprite);
+    }
     c.save(); c.globalAlpha *= alpha === undefined ? 1 : alpha;
-    const g = c.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, color); g.addColorStop(1, 'transparent');
-    c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2); c.restore();
+    c.drawImage(sprite, x - r, y - r, r * 2, r * 2); c.restore();
   }
 
   class Renderer {
     constructor(canvas) {
       this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false });
       this.lightCanvas = document.createElement('canvas'); this.lightCtx = this.lightCanvas.getContext('2d');
+      this.effectCanvas = document.createElement('canvas'); this.effectCtx = this.effectCanvas.getContext('2d');
+      this.awarenessCanvas = null; this.awarenessRegions = new Map();
+      this.soloCamera = {}; this.chassisCache = new Map();
+      this.decorationCache = new Map(); this.groundCache = new Map(); this.backdropCache = new Map(); this.vignetteCache = new Map();
       this.width = 1; this.height = 1; this.dpr = 1; this.time = 0;
       this.camX = 0; this.camY = 0; this.zoom = 1; this.lastTerrain = null; this.lastState = '';
       this.resize();
@@ -38,74 +49,194 @@
       const rect = this.canvas.getBoundingClientRect();
       this.width = Math.max(1, rect.width || root.innerWidth || 1280);
       this.height = Math.max(1, rect.height || root.innerHeight || 720);
-      this.dpr = Math.max(1, root.devicePixelRatio || 1);
+      this.nativeDpr = Math.max(1, root.devicePixelRatio || 1);
+      this.dpr = this.resolutionVersus ? Math.min(this.versusDensity || 1, this.nativeDpr, 1.5) : this.nativeDpr;
       this.canvas.width = Math.round(this.width * this.dpr); this.canvas.height = Math.round(this.height * this.dpr);
       this.lightCanvas.width = this.canvas.width; this.lightCanvas.height = this.canvas.height;
+      if (this.awarenessCanvas) this.resizeAwarenessLayer(rect);
+    }
+
+    resizeAwarenessLayer(rect) {
+      const layer = this.awarenessCanvas;
+      rect = rect || this.canvas.getBoundingClientRect();
+      layer.style.left = rect.left + 'px'; layer.style.top = rect.top + 'px';
+      layer.style.width = this.width + 'px'; layer.style.height = this.height + 'px';
+      layer.width = Math.round(this.width * this.nativeDpr); layer.height = Math.round(this.height * this.nativeDpr);
+      this.awarenessRegions.clear();
+    }
+
+    showAwarenessLayer(visible) {
+      if (visible && !this.awarenessCanvas) {
+        const layer = this.awarenessCanvas = document.createElement('canvas');
+        layer.dataset.versusLabels = ''; layer.setAttribute('aria-hidden', 'true');
+        layer.style.cssText = 'position:fixed;pointer-events:none;z-index:1;';
+        (this.canvas.parentNode || document.body).appendChild(layer);
+        this.awarenessCtx = layer.getContext('2d'); this.resizeAwarenessLayer();
+      }
+      if (!this.awarenessCanvas) return;
+      this.awarenessCanvas.hidden = !visible;
+      if (!visible) {
+        this.awarenessCtx.setTransform(1, 0, 0, 1, 0, 0);
+        this.awarenessCtx.clearRect(0, 0, this.awarenessCanvas.width, this.awarenessCanvas.height);
+        this.awarenessRegions.clear();
+      }
+    }
+
+    updateResolution(versus, dt, rect) {
+      let density = this.dpr;
+      if (this.resolutionVersus !== versus) {
+        this.resolutionVersus = versus; this.slowFrames = this.fastFrames = 0; this.frameAverage = 1 / 60;
+        this.versusDensity = Math.min(this.nativeDpr, 1.5);
+        density = versus ? this.versusDensity : this.nativeDpr;
+        this.showAwarenessLayer(versus);
+      }
+      // The DOM instruments remain native resolution. Only the shared ocean
+      // buffer adapts after sustained slow frames: 24 samples above 22 ms lower
+      // density by .15, down to .5; five seconds near 60 fps gently restores it.
+      // Sampling only the first viewport avoids counting each frame twice.
+      if (versus && !(rect.y > 0) && dt > 0) {
+        this.frameAverage = mix(this.frameAverage, Math.min(dt, .15), .1);
+        this.slowFrames = this.frameAverage > 1 / 45 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
+        this.fastFrames = this.frameAverage < 1 / 59 ? this.fastFrames + 1 : 0;
+        if (this.slowFrames >= 24) {
+          this.versusDensity = Math.max(.5, this.versusDensity - .15); this.slowFrames = this.fastFrames = 0;
+        } else if (this.fastFrames >= 300) {
+          this.versusDensity = Math.min(this.nativeDpr, 1.5, this.versusDensity + .05); this.fastFrames = 0;
+        }
+        density = this.versusDensity;
+      }
+      if (Math.abs(density - this.dpr) > .001) {
+        this.dpr = density;
+        this.canvas.width = Math.round(this.width * density); this.canvas.height = Math.round(this.height * density);
+        this.lightCanvas.width = this.canvas.width; this.lightCanvas.height = this.canvas.height;
+      }
     }
 
     draw(scene, dt, alpha) {
+      this.soloCamera.dt = dt; this.soloCamera.alpha = alpha;
+      this.render(scene, this.soloCamera, { x: 0, y: 0, width: this.width, height: this.height });
+    }
+
+    // Cameras own all follow/interpolation state. Rendering either viewport never
+    // advances the simulation, so both halves see exactly the same world step.
+    render(scene, camera, viewportRect) {
       if (!scene || !scene.rover || !scene.terrain) return;
-      const c = this.ctx, w = this.width, h = this.height;
+      camera = camera || this.soloCamera;
+      const rect = viewportRect || { x: 0, y: 0, width: this.width, height: this.height };
+      const c = this.ctx, w = rect.width, h = rect.height, dt = camera.dt;
+      if (w <= 0 || h <= 0) return;
+      this.viewWidth = w; this.viewHeight = h;
       const rover = scene.rover, terrain = scene.terrain, stage = scene.stage || terrain.stage || {};
-      const p = stage.palette || {}, id = stage.id || 'reef';
-      const prev = rover.prev || rover; alpha = clamp(alpha === undefined ? 1 : alpha, 0, 1);
+      const p = stage.palette || {}, id = stage.id || 'reef', versus = !!scene.players;
+      this.versusView = versus;
+      this.updateResolution(versus, dt, rect);
+      const prev = rover.prev || rover, alpha = clamp(camera.alpha === undefined ? 1 : camera.alpha, 0, 1);
       const x = mix(prev.x, rover.x, alpha), y = mix(prev.y, rover.y, alpha);
       const angle = mix(prev.angle, rover.angle, alpha);
       this.time = scene.time === undefined ? this.time + Math.min(dt || 0, .05) : scene.time;
-      const running = ['RUNNING', 'PAUSED', 'GAMEOVER'].includes(scene.state);
-      const baseZoom = clamp(w / 1060, .78, 1.48);
+      const running = versus || ['RUNNING', 'PAUSED', 'GAMEOVER'].includes(scene.state);
+      const baseZoom = versus ? clamp(Math.min(w / 1060, h / 410), .62, 1.18) : clamp(w / 1060, .78, 1.48);
       const desiredZoom = baseZoom * (running ? 1.07 / (1 + Math.min(Math.abs(rover.vx), 580) / 1500) : 1.7);
       const smoothing = 1 - Math.exp(-clamp(dt === undefined ? 1 / 60 : dt, 0, .05) * 4);
-      const resetCamera = this.lastTerrain !== terrain || (running && !['RUNNING', 'PAUSED', 'GAMEOVER'].includes(this.lastState));
-      this.zoom = resetCamera ? desiredZoom : mix(this.zoom, desiredZoom, smoothing);
+      const resetCamera = camera.lastTerrain !== terrain || !Number.isFinite(camera.camX) || (running && !['RUNNING', 'PAUSED', 'GAMEOVER'].includes(camera.lastState));
+      this.zoom = resetCamera ? desiredZoom : mix(camera.zoom, desiredZoom, smoothing);
       const anchor = running ? (w < 640 ? .34 : .31) : (w < 640 ? .65 : .70);
       const targetX = x - (anchor - .5) * w / this.zoom + (running ? clamp(rover.vx * .18, -28, 72) : 0);
       const targetY = y + (running ? clamp(rover.vy * .13, -30, 40) : 0);
-      if (resetCamera) {
-        this.camX = targetX; this.camY = targetY; this.zoom = desiredZoom;
-      } else {
-        this.camX = mix(this.camX, targetX, smoothing * 1.35); this.camY = mix(this.camY, targetY, smoothing);
-      }
+      this.camX = resetCamera ? targetX : mix(camera.camX, targetX, smoothing * 1.35);
+      this.camY = resetCamera ? targetY : mix(camera.camY, targetY, smoothing);
       this.lastTerrain = terrain; this.lastState = scene.state;
+      Object.assign(camera, { camX: this.camX, camY: this.camY, zoom: this.zoom, lastTerrain: terrain, lastState: running ? 'RUNNING' : scene.state });
       const floor = running ? .67 : (w < 640 ? .70 : .64);
       let tx = w * .5 - this.camX * this.zoom, ty = h * floor - this.camY * this.zoom;
       const shake = clamp(scene.shake || 0, 0, 10);
       tx += Math.sin(this.time * 113) * shake; ty += Math.cos(this.time * 97) * shake * .6;
-      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-      this.background(c, stage, p, tx, ty);
+      camera.screenX = x * this.zoom + tx; camera.screenY = y * this.zoom + ty;
+      camera.tx = tx; camera.ty = ty;
+      c.save(); c.setTransform(this.dpr, 0, 0, this.dpr, (rect.x || 0) * this.dpr, (rect.y || 0) * this.dpr);
+      c.beginPath(); c.rect(0, 0, w, h); c.clip();
+      this.background(c, stage, p);
       c.save(); c.translate(tx, ty); c.scale(this.zoom, this.zoom);
       this.roverX = x;
       const left = -tx / this.zoom - 100, right = (w - tx) / this.zoom + 100;
       const bottom = (h - ty) / this.zoom + 200;
+      this.bounds = { left, right, top: -ty / this.zoom - 100, bottom };
       this.decorations(c, terrain, id, left, right, false);
       this.ground(c, terrain, p, left, right, bottom, id);
-      if (id === 'ice') this.iceCeiling(c, terrain, left, right, -ty / this.zoom - 100);
+      if (id === 'ice') this.iceCeiling(c, terrain, left, right, this.bounds.top);
+      if (Number.isFinite(scene.targetX) && scene.targetX >= left && scene.targetX <= right) this.finishMarker(c, scene.targetX, terrain.height(scene.targetX));
       this.pickups(c, scene.pickups || []);
       this.particles(c, scene.particles || [], false);
-      this.drawVehicle(c, rover, alpha, scene.headlight);
+      this.projectiles(c, scene.projectiles || [], alpha);
+      if (versus) {
+        for (const player of scene.players) {
+          if (!player.rover || !this.inView(player.rover.x, player.rover.y, 110)) continue;
+          c.save(); if (player.out || player.respawn > 0 || player.respawnTimer > 0) c.globalAlpha = .32;
+          this.drawVehicle(c, player.rover, alpha, scene.headlight); c.restore();
+          this.playerEffects(c, player, alpha);
+        }
+      } else this.drawVehicle(c, rover, alpha, scene.headlight);
       this.decorations(c, terrain, id, left, right, true);
       this.particles(c, scene.particles || [], true);
       c.restore();
       this.ambient(c, stage);
-      if (id === 'abyss' || id === 'wreck' || id === 'volcanic') {
-        this.darkness(x * this.zoom + tx, y * this.zoom + ty, angle, scene.headlight, id);
-      }
+      if (id === 'abyss' || id === 'wreck' || id === 'volcanic') this.darkness(camera.screenX, camera.screenY, angle, scene.headlight, id);
       c.save(); c.translate(tx, ty); c.scale(this.zoom, this.zoom);
       this.floatingText(c, scene.texts || []); c.restore();
+      if (versus) {
+        const key = [w, h, id].join(':');
+        let sprite = this.vignetteCache.get(key);
+        if (!sprite) {
+          sprite = document.createElement('canvas'); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
+          const paint = sprite.getContext('2d'); paint.scale(sprite.width / w, sprite.height / h);
+          const gradient = paint.createRadialGradient(w * .51, h * .42, h * .25, w * .51, h * .45, Math.max(w, h) * .70);
+          gradient.addColorStop(0, 'transparent'); gradient.addColorStop(1, id === 'abyss' ? 'rgba(0,0,9,.6)' : 'rgba(0,13,27,.48)');
+          paint.fillStyle = gradient; paint.fillRect(0, 0, w, h); this.vignetteCache.set(key, sprite);
+          if (this.vignetteCache.size > 8) this.vignetteCache.delete(this.vignetteCache.keys().next().value);
+        }
+        c.drawImage(sprite, 0, 0, w, h);
+      } else {
       const vignette = c.createRadialGradient(w * .51, h * .42, h * .25, w * .51, h * .45, Math.max(w, h) * .70);
       vignette.addColorStop(0, 'transparent'); vignette.addColorStop(1, id === 'abyss' ? 'rgba(0,0,9,.6)' : 'rgba(0,13,27,.48)');
       c.fillStyle = vignette; c.fillRect(0, 0, w, h);
+      }
+
+      if (versus) {
+        this.viewportEffects(c, scene.player, camera, rect);
+      }
+      c.restore();
+      if (versus) this.renderAwarenessLayer(scene, camera, rect, alpha);
+    }
+
+    inView(x, y, margin) {
+      const b = this.bounds, m = margin || 0;
+      return !b || (x >= b.left - m && x <= b.right + m && y >= b.top - m && y <= b.bottom + m);
     }
 
     background(c, stage, p) {
-      const w = this.width, h = this.height, t = this.time, id = stage.id;
+      const w = this.viewWidth || this.width, h = this.viewHeight || this.height, t = this.time, id = stage.id;
+      if (this.versusView) {
+        const key = [w, h, id].join(':');
+        let sprite = this.backdropCache.get(key);
+        if (!sprite) {
+          sprite = document.createElement('canvas'); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
+          const paint = sprite.getContext('2d'); paint.scale(sprite.width / w, sprite.height / h);
+          const bg = paint.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, p.top || '#083e50'); bg.addColorStop(1, p.bottom || '#052c38');
+          paint.fillStyle = bg; paint.fillRect(0, 0, w, h);
+          glow(paint, w * .56, -h * .10, h * 1.2, id === 'volcanic' ? '#924f3a' : id === 'ice' ? '#94dced' : '#39c8bf', id === 'abyss' ? .08 : .19);
+          this.backdropCache.set(key, sprite);
+          if (this.backdropCache.size > 8) this.backdropCache.delete(this.backdropCache.keys().next().value);
+        }
+        c.drawImage(sprite, 0, 0, w, h);
+      } else {
       const bg = c.createLinearGradient(0, 0, 0, h);
       bg.addColorStop(0, p.top || '#083e50'); bg.addColorStop(1, p.bottom || '#052c38');
       c.fillStyle = bg; c.fillRect(0, 0, w, h);
       glow(c, w * .56, -h * .10, h * 1.2, id === 'volcanic' ? '#924f3a' : id === 'ice' ? '#94dced' : '#39c8bf', id === 'abyss' ? .08 : .19);
+      }
       if (id !== 'abyss' && id !== 'volcanic' && id !== 'wreck') {
         c.save(); c.globalCompositeOperation = 'screen';
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < (this.versusView ? 5 : 7); i++) {
           const x = w * (.09 + i * .17) + Math.sin(t * .12 + i) * 22;
           const g = c.createLinearGradient(x, 0, x + h * .28, h);
           g.addColorStop(0, 'rgba(146,245,232,.08)'); g.addColorStop(.65, 'rgba(106,237,221,.025)'); g.addColorStop(1, 'transparent');
@@ -115,7 +246,7 @@
         c.restore();
       }
       // Procedural silhouettes are anchored to the world at different parallax rates.
-      for (let layer = 0; layer < 3; layer++) {
+      for (let layer = 0; layer < (this.versusView ? 2 : 3); layer++) {
         const spacing = 145 + layer * 55, offset = this.camX * (.055 + layer * .07);
         const start = Math.floor(offset / spacing) - 2;
         c.fillStyle = id === 'volcanic' ? ['#222c39', '#1f2830', '#162b30'][layer] : id === 'ice' ? ['#174659', '#164452', '#103d47'][layer] : ['#0a3a48', '#093a44', '#063b3d'][layer];
@@ -149,15 +280,15 @@
     }
 
     fish(c, stage) {
-      const w = this.width, h = this.height, t = this.time;
+      const w = this.viewWidth || this.width, h = this.viewHeight || this.height, t = this.time;
       if (stage.id === 'abyss') return;
       c.save();
-      for (let school = 0; school < 3; school++) {
+      for (let school = 0; school < (this.versusView ? 2 : 3); school++) {
         const direction = school % 2 ? -1 : 1;
         const travel = t * (8 + school * 3) * direction - this.camX * (.12 + school * .05);
         const origin = ((school * w * .47 + travel) % (w + 330) + w + 330) % (w + 330) - 150;
         c.fillStyle = stage.id === 'ice' ? '#65a5b5' : school === 1 ? '#65ab9f' : '#377f85'; c.globalAlpha = .42;
-        for (let j = 0; j < 7; j++) {
+        for (let j = 0; j < (this.versusView ? 5 : 7); j++) {
           const x = origin + hash(j + school * 17) * 165;
           const y = h * (.20 + school * .13) + hash(j + 23) * 58 + Math.sin(t * .6 + j) * 7;
           const size = 2.7 + hash(j + 51) * 2.2;
@@ -169,7 +300,8 @@
       c.restore();
     }
 
-    ground(c, terrain, p, left, right, bottom, id) {
+    ground(c, terrain, p, left, right, bottom, id, texturePass) {
+      if (this.versusView && !texturePass) { this.versusGround(c, terrain, p, left, right, bottom, id); return; }
       const points = [];
       for (let x = Math.floor(left / 12) * 12; x <= right + 12; x += 12) points.push([x, terrain.height(x)]);
       const path = () => {
@@ -208,6 +340,41 @@
         const y = terrain.height(x) + (front ? 18 : 3), size = 20 + hash(seed + 22) * (front ? 43 : 70);
         if (front && (n < .56 || Math.abs(x - this.roverX) < 92)) continue;
         c.save(); c.translate(x, y); c.scale(front ? 1.10 : 1, 1); c.globalAlpha = front ? .93 : .78;
+        if (this.versusView) {
+          const key = [id, seed, front, this.dpr].join(':');
+          let sprite = this.decorationCache.get(key);
+          if (!sprite) {
+            sprite = document.createElement('canvas');
+            const scale = Math.min(1.5, this.dpr); sprite.width = Math.round(220 * scale); sprite.height = Math.round(300 * scale);
+            const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, 110 * scale, 270 * scale);
+            this.drawDecoration(paint, id, seed, n, size); this.decorationCache.set(key, sprite);
+            if (this.decorationCache.size > 128) this.decorationCache.delete(this.decorationCache.keys().next().value);
+          }
+          if (id === 'kelp' || id === 'reef' || id === 'wreck') c.rotate(Math.sin(this.time * .6 + seed) * .015);
+          c.drawImage(sprite, -110, -270, 220, 300);
+        } else this.drawDecoration(c, id, seed, n, size);
+        c.restore();
+      }
+      if (!front && id === 'wreck') {
+        for (let i = Math.floor(left / 1050); i <= right / 1050; i++) {
+          const x = i * 1050 + 520; this.wreck(c, x, terrain.height(x) + 13, hash(i + 719));
+        }
+      }
+      if (!front && id === 'volcanic') {
+        for (let i = Math.max(0, Math.floor((left - 670) / 960)); i <= (right - 670) / 960; i++) {
+          const x = 670 + i * 960, y = terrain.height(x);
+          glow(c, x, y - 20, 90, '#fa744a', .20);
+          ellipse(c, x, y - 2, 24, 7, '#241f29'); ellipse(c, x, y - 3, 20, 4, '#ec9b57');
+          for (let j = 0; j < 14; j++) {
+            const rise = ((this.time * (24 + j * 3) + j * 21) % 190);
+            c.save(); c.globalAlpha = (1 - rise / 190) * .30;
+            ellipse(c, x + Math.sin(rise * .035 + j) * (8 + rise * .07), y - 5 - rise, 2 + rise * .02, 4 + rise * .04, '#ffb46f'); c.restore();
+          }
+        }
+      }
+    }
+
+    drawDecoration(c, id, seed, n, size) {
         if (id === 'kelp') {
           this.kelp(c, seed, size * 2.2, n > .55 ? '#558f51' : '#267468');
           if (n > .75) this.coral(c, seed + 7, size * .55, '#bf9770');
@@ -237,23 +404,36 @@
           else if (n < .8) this.coral(c, seed, size, n > .56 ? '#d88882' : '#dfad72');
           else this.rock(c, seed, size * .6, '#397c78');
         }
-        c.restore();
+    }
+
+    versusGround(c, terrain, palette, left, right, bottom, id) {
+      // Terrain is immutable within a round. Rasterized strips include the
+      // exact same collision edge, sand and stones as the full solo painter.
+      c.fillStyle = palette.ground || '#173b3c'; c.beginPath();
+      for (let x = Math.floor(left / 12) * 12; x <= right + 12; x += 12) {
+        if (x === Math.floor(left / 12) * 12) c.moveTo(x, terrain.height(x)); else c.lineTo(x, terrain.height(x));
       }
-      if (!front && id === 'wreck') {
-        for (let i = Math.floor(left / 1050); i <= right / 1050; i++) {
-          const x = i * 1050 + 520; this.wreck(c, x, terrain.height(x) + 13, hash(i + 719));
+      c.lineTo(right + 24, bottom); c.lineTo(left - 24, bottom); c.closePath(); c.fill();
+      if (this.groundTerrain !== terrain) { this.groundTerrain = terrain; this.groundCache.clear(); }
+      for (let chunk = Math.floor(left / 512); chunk <= Math.floor(right / 512); chunk++) {
+        const key = chunk + ':' + this.dpr;
+        let tile = this.groundCache.get(key);
+        if (!tile) {
+          const from = chunk * 512; let low = Infinity, high = -Infinity;
+          for (let x = from - 12; x <= from + 524; x += 8) { const y = terrain.height(x); low = Math.min(low, y); high = Math.max(high, y); }
+          const top = Math.floor(low - 20), height = Math.ceil(high + 220 - top), scale = Math.min(1.5, this.dpr);
+          const sprite = document.createElement('canvas'); sprite.width = Math.round(512 * scale); sprite.height = Math.round(height * scale);
+          const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, -from * scale, -top * scale);
+          this.ground(paint, terrain, palette, from - 12, from + 524, top + height, id, true);
+          tile = { sprite, x: from, y: top, height }; this.groundCache.set(key, tile);
+          if (this.groundCache.size > 32) this.groundCache.delete(this.groundCache.keys().next().value);
         }
+        c.drawImage(tile.sprite, tile.x, tile.y, 512, tile.height);
       }
-      if (!front && id === 'volcanic') {
-        for (let i = Math.max(0, Math.floor((left - 670) / 960)); i <= (right - 670) / 960; i++) {
-          const x = 670 + i * 960, y = terrain.height(x);
-          glow(c, x, y - 20, 90, '#fa744a', .20);
-          ellipse(c, x, y - 2, 24, 7, '#241f29'); ellipse(c, x, y - 3, 20, 4, '#ec9b57');
-          for (let j = 0; j < 14; j++) {
-            const rise = ((this.time * (24 + j * 3) + j * 21) % 190);
-            c.save(); c.globalAlpha = (1 - rise / 190) * .30;
-            ellipse(c, x + Math.sin(rise * .035 + j) * (8 + rise * .07), y - 5 - rise, 2 + rise * .02, 4 + rise * .04, '#ffb46f'); c.restore();
-          }
+      if (id !== 'abyss') {
+        c.strokeStyle = id === 'volcanic' ? 'rgba(255,173,95,.07)' : 'rgba(180,255,221,.07)'; c.lineWidth = 1.5;
+        for (let i = Math.floor(left / 125); i < right / 125; i++) {
+          const x = i * 125; c.beginPath(); c.ellipse(x + Math.sin(this.time * .7 + i) * 13, terrain.height(x) + 18, 24 + Math.sin(this.time + i) * 7, 5, -.12, .2, Math.PI * 1.5); c.stroke();
         }
       }
     }
@@ -325,10 +505,19 @@
 
     pickups(c, pickups) {
       for (const item of pickups) {
-        if (item.collected || Math.abs(item.x - this.camX) > this.width / this.zoom) continue;
+        if (item.collected || !this.inView(item.x, item.y, 35)) continue;
         const bob = item.type === 'chest' ? 0 : Math.sin(this.time * 2.7 + item.x * .017) * 3;
         c.save(); c.translate(item.x, item.y + bob);
-        if (item.type === 'oxygen') {
+        if (item.type === 'crate') {
+          const pulse = 1 + Math.sin(this.time * 3 + item.x) * .07;
+          glow(c, 0, 0, 43, '#c69aff', .24);
+          c.scale(pulse, pulse); c.lineWidth = 2.2; c.strokeStyle = '#e2b9ff';
+          ellipse(c, 0, 0, 23, 23, 'rgba(74,39,110,.60)'); c.stroke();
+          c.strokeStyle = '#79f6e6'; c.lineWidth = 1.5;
+          c.beginPath(); c.arc(0, 0, 28, this.time * 1.3, this.time * 1.3 + 2.3); c.arc(0, 0, 28, this.time * 1.3 + Math.PI, this.time * 1.3 + Math.PI + 2.3); c.stroke();
+          c.fillStyle = '#fff3d8'; c.font = '900 29px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText('?', 0, 1);
+          ellipse(c, -11, -12, 3.5, 2, '#efd7ff');
+        } else if (item.type === 'oxygen') {
           glow(c, 0, 0, 28, '#76fddd', .12);
           c.fillStyle = '#122f38'; roundRect(c, -10, -17, 20, 33, 7); c.fill();
           const g = c.createLinearGradient(-9, 0, 9, 0); g.addColorStop(0, '#64cbbb'); g.addColorStop(.4, '#c1fae5'); g.addColorStop(1, '#31877e');
@@ -356,6 +545,204 @@
       }
     }
 
+    finishMarker(c, x, y) {
+      c.save(); c.translate(x, y);
+      glow(c, 0, -90, 150, '#ffe3a0', .18);
+      c.strokeStyle = '#ffdf94'; c.lineWidth = 4; c.beginPath(); c.moveTo(0, 4); c.lineTo(0, -210); c.stroke();
+      c.fillStyle = '#122f3f'; c.fillRect(0, -210, 84, 44);
+      for (let row = 0; row < 4; row++) for (let col = 0; col < 8; col++) {
+        if ((row + col) % 2) continue;
+        c.fillStyle = '#fff0c0'; c.fillRect(col * 10.5, -210 + row * 11, 10.5, 11);
+      }
+      c.font = '800 12px system-ui, sans-serif'; c.fillStyle = '#ffe7ab'; c.fillText('FINISH', 8, -147); c.restore();
+    }
+
+    projectiles(c, projectiles, alpha) {
+      for (const projectile of projectiles) {
+        if (projectile.life <= 0 || !this.inView(projectile.x, projectile.y, 100)) continue;
+        const old = projectile.prev || projectile;
+        const x = mix(old.x, projectile.x, alpha), y = mix(old.y, projectile.y, alpha);
+        const color = projectile.owner === 1 ? '#7ff8f1' : '#ffd292';
+        c.save(); c.translate(x, y);
+        if (projectile.type === 'anchor') {
+          glow(c, 0, -12, 30, '#ffaf87', .15);
+          c.strokeStyle = '#142c36'; c.lineWidth = 9; c.lineCap = 'round';
+          const shape = () => {
+            c.beginPath(); c.moveTo(0, -31); c.lineTo(0, -3); c.moveTo(-12, -24); c.lineTo(12, -24);
+            c.moveTo(-18, -15); c.quadraticCurveTo(-15, 4, 0, 3); c.quadraticCurveTo(15, 4, 18, -15); c.stroke();
+          };
+          shape(); c.strokeStyle = '#a2b5be'; c.lineWidth = 4.5; shape();
+          c.strokeStyle = color; c.lineWidth = 2.5; ellipse(c, 0, -36, 5, 5); c.stroke();
+          c.fillStyle = '#d9e7e2';
+          for (const dir of [-1, 1]) { c.beginPath(); c.moveTo(dir * 18, -19); c.lineTo(dir * 24, -9); c.lineTo(dir * 11, -11); c.closePath(); c.fill(); }
+        } else {
+          const direction = projectile.direction || (projectile.vx < 0 ? -1 : 1);
+          if (Number.isFinite(projectile.angle)) c.rotate(projectile.angle); else c.scale(direction, 1);
+          c.strokeStyle = 'rgba(182,255,244,.64)'; c.lineWidth = 1;
+          for (let j = 0; j < 9; j++) {
+            const drift = (this.time * 8 + j * .73) % 9;
+            c.globalAlpha = (1 - drift / 9) * .7;
+            ellipse(c, -23 - drift * 9, Math.sin(drift * 2 + j) * (2 + drift * .7), 2 + drift * .35, 2 + drift * .35); c.stroke();
+          }
+          c.globalAlpha = 1; glow(c, -20, 0, 23, '#fff0b4', .4);
+          c.fillStyle = '#5d858f'; c.beginPath(); c.moveTo(-20, -4); c.lineTo(-29, -12); c.lineTo(-27, 12); c.lineTo(-20, 4); c.fill();
+          const hull = c.createLinearGradient(0, -8, 0, 8); hull.addColorStop(0, '#e2f2f0'); hull.addColorStop(.45, '#98bbc0'); hull.addColorStop(1, '#426773');
+          ellipse(c, 0, 0, 25, 8, hull); c.strokeStyle = '#183943'; c.lineWidth = 2; c.stroke();
+          ellipse(c, 18, 0, 7, 7, color); c.fillStyle = '#254c59'; c.fillRect(-12, -7, 3, 14);
+          ellipse(c, 4, -2, 3, 2, '#f7ffff');
+        }
+        c.restore();
+      }
+    }
+
+    playerEffects(c, player, alpha) {
+      const effects = player.effects || {}, rover = player.rover, old = rover.prev || rover;
+      const x = mix(old.x, rover.x, alpha), y = mix(old.y, rover.y, alpha);
+      c.save(); c.translate(x, y);
+      if (effects.shield > 0 || effects.spawnShield > 0 || player.spawnShield > 0) {
+        const radius = (rover.stats.wheelbase || 64) * .70 + 20;
+        const color = player.index === 1 ? '#9efff5' : '#ffe0a5';
+        glow(c, 0, -2, radius + 12, color, .13);
+        c.strokeStyle = color; c.lineWidth = 2.5; c.globalAlpha = .6 + Math.sin(this.time * 5) * .18;
+        ellipse(c, 0, -2, radius, radius, 'rgba(124,234,243,.065)'); c.stroke();
+        c.strokeStyle = '#e7ffff'; c.lineWidth = 4; c.beginPath(); c.arc(0, -2, radius - 6, Math.PI * 1.1, Math.PI * 1.43); c.stroke(); c.globalAlpha = 1;
+      }
+      if (effects.turbo > 0) {
+        const tail = -(rover.stats.wheelbase || 64) * .7;
+        for (let i = 0; i < 3; i++) {
+          c.strokeStyle = i === 1 ? '#e5ffff' : '#61f7ed'; c.lineWidth = 3 - i * .5;
+          c.beginPath(); c.moveTo(tail, i * 7 - 7); c.lineTo(tail - 35 - Math.sin(this.time * 35 + i) * 15, i * 9 - 9); c.stroke();
+        }
+      }
+      if (effects.net > 0) {
+        for (let j = 0; j < 3; j++) {
+          const xx = (j - 1) * 27, yy = -33 + Math.sin(this.time * 3 + j) * 3;
+          glow(c, xx, yy, 20, '#ee9bff', .2);
+          c.strokeStyle = '#e6a7fc'; c.lineWidth = 1.3;
+          for (let k = 0; k < 4; k++) {
+            c.beginPath(); c.moveTo(xx + (k - 1.5) * 5, yy + 3);
+            c.bezierCurveTo(xx + (k - 1.5) * 8 + 4, yy + 14, xx + (k - 1.5) * 8 - 8, yy + 26, xx + (k - 1.5) * 7 + Math.sin(this.time * 6 + k) * 4, yy + 38); c.stroke();
+          }
+          c.fillStyle = 'rgba(222,148,255,.72)'; c.beginPath(); c.ellipse(xx, yy, 14, 11, 0, Math.PI, TAU); c.quadraticCurveTo(xx + 4, yy + 6, xx - 14, yy); c.fill();
+          ellipse(c, xx - 4, yy - 5, 3, 1.5, '#f9daff');
+        }
+      }
+      if (effects.blocked > 0 || effects.dodged > 0) {
+        const blocked = effects.blocked > 0, remaining = blocked ? effects.blocked : effects.dodged;
+        const progress = 1 - clamp(remaining / (blocked ? .8 : 1.3), 0, 1);
+        c.globalAlpha = (1 - progress) * .9; c.strokeStyle = blocked ? '#caffff' : '#ffeba5'; c.lineWidth = 2.5;
+        const radius = 47 + progress * 47;
+        ellipse(c, 0, -5, radius, radius); c.stroke();
+        for (let j = 0; j < 7; j++) {
+          const angle = j / 7 * TAU + this.time * .6;
+          c.beginPath(); c.moveTo(Math.cos(angle) * (radius + 5), Math.sin(angle) * (radius + 5) - 5);
+          c.lineTo(Math.cos(angle) * (radius + 13), Math.sin(angle) * (radius + 13) - 5); c.stroke();
+        }
+      }
+      c.restore();
+    }
+
+    renderAwarenessLayer(scene, camera, rect, alpha) {
+      // Names and gap readouts are UI: keep their 11 px lettering native even
+      // when the ocean buffer adapts. Clear only last frame's small label areas.
+      const c = this.awarenessCtx, density = this.nativeDpr;
+      const key = [rect.x || 0, rect.y || 0, rect.width, rect.height].join(':');
+      c.save(); c.setTransform(density, 0, 0, density, (rect.x || 0) * density, (rect.y || 0) * density);
+      c.beginPath(); c.rect(0, 0, rect.width, rect.height); c.clip();
+      for (const area of this.awarenessRegions.get(key) || []) c.clearRect(area.x - 2, area.y - 2, area.width + 4, area.height + 4);
+      this.awarenessRegions.set(key, this.opponentAwareness(c, scene, camera, alpha));
+      c.restore();
+    }
+
+    opponentAwareness(c, scene, camera, alpha) {
+      const w = this.viewWidth, h = this.viewHeight;
+      const areas = [];
+      const own = scene.player || scene.players.find(player => player.rover === scene.rover);
+      c.save(); c.font = '800 11px system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      for (const player of scene.players) {
+        const rover = player.rover; if (!rover) continue;
+        const old = rover.prev || rover, x = mix(old.x, rover.x, alpha) * this.zoom + camera.tx;
+        const y = mix(old.y, rover.y, alpha) * this.zoom + camera.ty;
+        const color = player.index === 1 ? '#83f4ed' : '#ffd092';
+        if (x >= 35 && x <= w - 35 && y >= 145 && y <= h - 14) {
+          const yy = Math.max(153, y - 61 * this.zoom);
+          c.fillStyle = '#0a2632'; roundRect(c, x - 17, yy - 10, 34, 20, 8); c.fill();
+          c.strokeStyle = color; c.lineWidth = 1; c.stroke(); c.fillStyle = color; c.fillText('P' + (player.index + 1), x, yy);
+          areas.push({ x: x - 17, y: yy - 10, width: 34, height: 20 });
+        } else if (player !== own && player.rover !== scene.rover) {
+          const gap = Math.round(Math.abs(rover.x - scene.rover.x) * .1), ahead = rover.x >= scene.rover.x;
+          const vertical = x >= 35 && x <= w - 35;
+          const label = 'P' + (player.index + 1) + ' ' + (vertical ? y < 145 ? '▲' : '▼' : ahead ? '▶' : '◀') + ' ' + gap + ' m ' + (ahead ? 'ahead' : 'behind');
+          const tw = c.measureText(label).width + 24, xx = vertical ? clamp(x, tw / 2 + 10, w - tw / 2 - 10) : ahead ? w - tw / 2 - 12 : tw / 2 + 12;
+          const yy = vertical ? y < 145 ? 155 : h - 44 : clamp(y, 155, h - 46);
+          c.fillStyle = 'rgba(7,29,42,.91)'; roundRect(c, xx - tw / 2, yy - 14, tw, 28, 12); c.fill();
+          c.strokeStyle = color; c.lineWidth = 1; c.stroke(); c.fillStyle = color; c.fillText(label, xx, yy);
+          areas.push({ x: xx - tw / 2, y: yy - 14, width: tw, height: 28 });
+        }
+      }
+      c.restore();
+      return areas;
+    }
+
+    viewportEffects(c, player, camera, rect) {
+      if (!player) return;
+      const effects = player.effects || {}, w = this.viewWidth, h = this.viewHeight;
+      const x = camera.screenX, y = camera.screenY, t = this.time;
+      c.save();
+      if (effects.riptide > 0) {
+        const ew = Math.round(w * this.dpr), eh = Math.round(h * this.dpr);
+        if (this.effectCanvas.width !== ew || this.effectCanvas.height !== eh) { this.effectCanvas.width = ew; this.effectCanvas.height = eh; }
+        this.effectCtx.setTransform(1, 0, 0, 1, 0, 0);
+        this.effectCtx.drawImage(this.canvas, Math.round((rect.x || 0) * this.dpr), Math.round((rect.y || 0) * this.dpr), ew, eh, 0, 0, ew, eh);
+        for (let row = 0; row < h; row += 6) {
+          const sh = Math.min(6, h - row), wave = Math.sin(row * .042 + t * 8) * 8;
+          c.drawImage(this.effectCanvas, 0, row * this.dpr, ew, sh * this.dpr, wave, row, w, sh);
+        }
+        c.fillStyle = 'rgba(80,134,255,.075)'; c.fillRect(0, 0, w, h);
+      }
+      if (effects.turbo > 0) {
+        c.strokeStyle = '#b7fff5'; c.lineWidth = 1.5;
+        for (let j = 0; j < 18; j++) {
+          const yy = 83 + hash(j + 55) * Math.max(1, h - 110), xx = ((hash(j + 12) * w - t * (550 + j * 17)) % w + w) % w;
+          if (Math.abs(yy - y) < 55 && Math.abs(xx - x) < 100) continue;
+          c.globalAlpha = .13 + hash(j + 11) * .25; c.beginPath(); c.moveTo(xx, yy); c.lineTo(xx + 24 + hash(j) * 70, yy); c.stroke();
+        }
+        c.globalAlpha = 1;
+      }
+      if (effects.siphon > 0 || effects.siphonGain > 0 || effects.magnet > 0 || effects.magnetGain > 0) {
+        const pearls = effects.magnet > 0 || effects.magnetGain > 0;
+        const gaining = effects.siphonGain > 0 || effects.magnetGain > 0;
+        for (let j = 0; j < 22; j++) {
+          let q = ((t * .75 + j / 22) % 1); if (!gaining) q = 1 - q;
+          const bx = mix(w * .6, x, q) + Math.sin(q * 8 + j) * 24;
+          const by = mix(player.index === 1 ? 0 : h, y, q);
+          c.globalAlpha = Math.sin(q * Math.PI) * .9; c.strokeStyle = pearls ? '#fff3c4' : '#aaffd8'; c.lineWidth = 1.5;
+          ellipse(c, bx, by, 3 + hash(j + 45) * 5, 3 + hash(j + 45) * 5, pearls ? '#eddfb1' : 'rgba(101,255,187,.17)'); c.stroke();
+          if (pearls) ellipse(c, bx - 1, by - 2, 1.5, 1, '#ffffff');
+        }
+        c.globalAlpha = 1;
+      }
+      if (effects.hit > 0) {
+        c.globalAlpha = clamp(effects.hit / .8, 0, 1) * .65;
+        c.strokeStyle = '#ff9c7d'; c.lineWidth = 7; c.strokeRect(3, 3, w - 6, h - 6);
+        c.fillStyle = 'rgba(255,103,79,.13)'; c.fillRect(0, 0, w, h); c.globalAlpha = 1;
+      }
+      if (effects.ink > 0) {
+        const elapsed = clamp(3.5 - effects.ink, 0, 3.5), spread = clamp(elapsed / .45, .1, 1);
+        const hole = mix(105, 25, clamp(elapsed / 3.1, 0, 1)), outer = Math.max(w, h) * 1.5;
+        const ink = c.createRadialGradient(x, y, hole, x, y, outer);
+        ink.addColorStop(0, 'rgba(1,3,13,0)'); ink.addColorStop(Math.min(.2, 52 / outer), 'rgba(2,4,17,.93)'); ink.addColorStop(1, 'rgba(1,2,10,.985)');
+        c.globalAlpha = spread * Math.min(1, effects.ink / .35); c.fillStyle = ink; c.fillRect(0, 0, w, h);
+        c.save(); c.beginPath(); c.rect(0, 0, w, h); c.arc(x, y, hole + 32, 0, TAU, true); c.clip('evenodd');
+        for (let j = 0; j < 9; j++) {
+          const bx = w * hash(j + 633), by = h * hash(j + 34), radius = 35 + hash(j + 47) * 80;
+          ellipse(c, bx + Math.sin(t + j) * 15, by + Math.cos(t * .7 + j) * 18, radius * spread, radius * .7 * spread, 'rgba(8,9,25,.44)');
+        }
+        c.restore();
+      }
+      c.restore();
+    }
+
     drawVehicle(c, rover, alpha, headlight) {
       const s = rover.stats, prev = rover.prev || rover;
       const x = mix(prev.x, rover.x, alpha), y = mix(prev.y, rover.y, alpha), angle = mix(prev.angle, rover.angle, alpha);
@@ -379,6 +766,27 @@
       });
       wheels.forEach(wheel => this.wheel(c, wheel, id));
       c.translate(x, y); c.rotate(angle);
+      if (this.versusView) {
+        // The pressure hull is rigid. Cache its detailed paint/glass work once
+        // per tournament vehicle and colour; suspension and wheels stay live.
+        const key = [id, s.color, wb, headlight, this.dpr].join(':');
+        let sprite = this.chassisCache.get(key);
+        if (!sprite) {
+          sprite = document.createElement('canvas');
+          const scale = Math.max(1.5, Math.min(3, this.dpr));
+          sprite.width = 280 * scale; sprite.height = 150 * scale;
+          const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, 140 * scale, 80 * scale); paint.lineCap = 'round';
+          this.drawChassis(paint, rover, headlight, true); this.chassisCache.set(key, sprite);
+        }
+        c.drawImage(sprite, -140, -80, 280, 150);
+        const tail = -wb * .64 - 15, spin = Math.cos(this.time * (10 + Math.abs(rover.vx) * .2));
+        c.strokeStyle = '#b4c6b9'; c.lineWidth = 3; c.beginPath(); c.moveTo(tail, 1 - 13 * spin); c.lineTo(tail, 1 + 13 * spin); c.stroke();
+      } else this.drawChassis(c, rover, headlight, false);
+      c.restore();
+    }
+
+    drawChassis(c, rover, headlight, frozenPropeller) {
+      const s = rover.stats, wb = s.wheelbase || 64, id = s.id || 'rover';
       if (id === 'manta') {
         c.fillStyle = '#477f94'; c.strokeStyle = '#a1cfce'; c.lineWidth = 2;
         c.beginPath(); c.moveTo(-wb * .57, 8); c.quadraticCurveTo(-wb * .3, -43, wb * .12, -14); c.lineTo(wb * .73, 5); c.quadraticCurveTo(wb * .2, 0, -wb * .57, 8); c.fill(); c.stroke();
@@ -389,7 +797,7 @@
       c.fillStyle = '#1f444b'; roundRect(c, tail - 10, -7, 19, 17, 4); c.fill();
       c.strokeStyle = '#8bafab'; c.lineWidth = 2; c.strokeRect(tail - 9, -9, 11, 20);
       c.strokeStyle = '#b4c6b9'; c.lineWidth = 3; c.beginPath();
-      const spin = Math.cos(this.time * (10 + Math.abs(rover.vx) * .2));
+      const spin = frozenPropeller ? 0 : Math.cos(this.time * (10 + Math.abs(rover.vx) * .2));
       c.moveTo(tail - 5, 1 - 13 * spin); c.lineTo(tail - 5, 1 + 13 * spin); c.stroke();
       const hullWidth = wb * (id === 'bike' ? 1.05 : 1.25), hullHeight = id === 'truck' ? 33 : id === 'bike' ? 22 : 28;
       // Glass dome with a seated pilot, drawn behind the pressure hull.
@@ -408,7 +816,7 @@
       c.beginPath(); c.arc(domeX, domeY, domeR - 4, Math.PI * 1.12, Math.PI * 1.54); c.stroke(); c.globalAlpha = 1;
       c.strokeStyle = '#1d3e43'; c.lineWidth = 3; c.beginPath(); c.moveTo(domeX - domeR, -8); c.lineTo(domeX + domeR, -8); c.stroke();
       const color = s.color || '#eda650';
-      const hull = c.createLinearGradient(0, -13, 0, hullHeight * .6); hull.addColorStop(0, color); hull.addColorStop(1, id === 'rover' ? '#ce7b36' : color);
+      const hull = c.createLinearGradient(0, -13, 0, hullHeight * .6); hull.addColorStop(0, color); hull.addColorStop(1, id === 'rover' && color === '#ffb547' ? '#ce7b36' : color);
       c.fillStyle = hull; c.strokeStyle = '#193c43'; c.lineWidth = 3;
       roundRect(c, -hullWidth / 2, -10, hullWidth, hullHeight, id === 'bike' ? 10 : 13); c.fill(); c.stroke();
       c.fillStyle = 'rgba(255,239,172,.35)'; roundRect(c, -hullWidth * .42, -8, hullWidth * .73, 4, 2); c.fill();
@@ -431,8 +839,8 @@
       // Radio aerial and running light add a small recognisable silhouette.
       c.strokeStyle = '#234951'; c.lineWidth = 2; c.beginPath(); c.moveTo(-hullWidth * .3, -10); c.lineTo(-hullWidth * .34, -36); c.stroke();
       ellipse(c, -hullWidth * .34, -36, 2.5, 2.5, '#ffcf84');
-      c.restore();
     }
+
 
     wheel(c, wheel, id) {
       c.save(); c.translate(wheel.x, wheel.y); c.rotate(wheel.angle);
@@ -451,7 +859,7 @@
 
     particles(c, particles, front) {
       for (const particle of particles) {
-        if (particle.life <= 0 || (particle.type === 'sand') === front) continue;
+        if (particle.life <= 0 || (particle.type === 'sand') === front || !this.inView(particle.x, particle.y, 15)) continue;
         const alpha = clamp(particle.life / (particle.maxLife || 1), 0, 1);
         c.save(); c.globalAlpha = alpha;
         if (particle.type === 'bubble' || particle.type === 'bubbles') {
@@ -466,10 +874,10 @@
     }
 
     ambient(c, stage) {
-      const w = this.width, h = this.height, t = this.time;
+      const w = this.viewWidth || this.width, h = this.viewHeight || this.height, t = this.time;
       c.save();
       // Fixed-size deterministic particle field: nothing is allocated or retained per bubble.
-      for (let i = 0; i < 55; i++) {
+      for (let i = 0; i < (this.versusView ? 32 : 55); i++) {
         const factor = .04 + hash(i + 629) * .10;
         const x = ((hash(i + 33) * w - this.camX * factor + Math.sin(t * .13 + i) * 15) % w + w) % w;
         const y = ((hash(i + 73) * h - t * (3 + hash(i) * 10)) % h + h) % h;
@@ -482,7 +890,7 @@
     }
 
     darkness(x, y, angle, headlight, stage) {
-      const c = this.lightCtx, w = this.width, h = this.height, color = lightColor(headlight);
+      const c = this.lightCtx, w = this.viewWidth || this.width, h = this.viewHeight || this.height, color = lightColor(headlight);
       c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); c.clearRect(0, 0, w, h);
       c.fillStyle = stage === 'abyss' ? 'rgba(0,3,13,.965)' : stage === 'wreck' ? 'rgba(0,9,20,.36)' : 'rgba(8,4,16,.23)'; c.fillRect(0, 0, w, h);
       c.save(); c.translate(x, y); c.rotate(angle); c.globalCompositeOperation = 'destination-out';
@@ -492,7 +900,7 @@
       const length = Math.min(700, w * .75), beam = c.createLinearGradient(20, 0, length, 0);
       beam.addColorStop(0, 'rgba(0,0,0,.95)'); beam.addColorStop(.45, 'rgba(0,0,0,.82)'); beam.addColorStop(1, 'transparent');
       c.fillStyle = beam; c.beginPath(); c.moveTo(30 * this.zoom, -6); c.lineTo(length, -length * .32); c.quadraticCurveTo(length * 1.12, 0, length, length * .32); c.closePath(); c.fill(); c.restore();
-      this.ctx.drawImage(this.lightCanvas, 0, 0, w, h);
+      this.ctx.drawImage(this.lightCanvas, 0, 0, Math.round(w * this.dpr), Math.round(h * this.dpr), 0, 0, w, h);
       const g = this.ctx; g.save(); g.translate(x, y); g.rotate(angle); g.globalAlpha = stage === 'abyss' ? .065 : .025;
       g.fillStyle = color; g.beginPath(); g.moveTo(33 * this.zoom, -2); g.lineTo(length, -length * .31); g.quadraticCurveTo(length * 1.1, 0, length, length * .31); g.closePath(); g.fill(); g.restore();
     }
@@ -500,7 +908,7 @@
     floatingText(c, texts) {
       c.save(); c.font = '700 15px system-ui, -apple-system, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
       for (const text of texts) {
-        if (text.life <= 0) continue;
+        if (text.life <= 0 || !this.inView(text.x, text.y, 80)) continue;
         c.globalAlpha = clamp(text.life / .35, 0, 1); c.lineWidth = 4; c.strokeStyle = '#12333d'; c.strokeText(text.text, text.x, text.y);
         c.fillStyle = text.color || '#ffe5a0'; c.fillText(text.text, text.x, text.y);
       }

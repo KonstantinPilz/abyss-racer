@@ -11,6 +11,8 @@
       this.master = null;
       this.engine = null;
       this.engineGain = null;
+      this.engines = [];
+      this.engineGains = [];
       this.muted = false;
       this.unlocked = false;
       this.voices = new Set();
@@ -29,18 +31,25 @@
           this.master = this.context.createGain();
           this.master.gain.value = this.muted ? 0 : 0.48;
           this.master.connect(this.context.destination);
-          this.engineGain = this.context.createGain();
-          this.engineGain.gain.value = 0;
-          const lowpass = this.context.createBiquadFilter();
-          lowpass.type = 'lowpass';
-          lowpass.frequency.value = 300;
-          this.engine = this.context.createOscillator();
-          this.engine.type = 'sawtooth';
-          this.engine.frequency.value = 43;
-          this.engine.connect(lowpass);
-          lowpass.connect(this.engineGain);
-          this.engineGain.connect(this.master);
-          this.engine.start();
+          for (let index = 0; index < 2; index++) {
+            const gain = this.context.createGain();
+            gain.gain.value = 0;
+            const lowpass = this.context.createBiquadFilter();
+            lowpass.type = 'lowpass';
+            lowpass.frequency.value = 300;
+            const engine = this.context.createOscillator();
+            engine.type = 'sawtooth';
+            engine.frequency.value = 43 + index * 8;
+            engine.connect(lowpass);
+            lowpass.connect(gain);
+            gain.connect(this.master);
+            engine.start();
+            this.engines.push(engine);
+            this.engineGains.push(gain);
+          }
+          // Preserve the solo-facing handles used by existing integrations.
+          this.engine = this.engines[0];
+          this.engineGain = this.engineGains[0];
           const length = this.context.sampleRate * 0.3;
           this.noiseBuffer = this.context.createBuffer(1, length, this.context.sampleRate);
           const noise = this.noiseBuffer.getChannelData(0);
@@ -121,24 +130,64 @@
         case 'level': [523, 659, 784, 1046, 1318].forEach((frequency, i) => this.tone(frequency, 0.3, 0.09, 'triangle', i * 0.09)); break;
         case 'bubble': this.tone(220 + Math.random() * 160, 0.085, 0.028, 'sine', 0, 680 + Math.random() * 260); break;
         case 'heartbeat': this.tone(64, 0.12, 0.14); this.tone(51, 0.15, 0.1, 'sine', 0.19); break;
+        case 'ink':
+          this.noise(0.3, 0.2, 450);
+          this.tone(180, 0.45, 0.12, 'sine', 0, 36);
+          break;
+        case 'torpedo':
+          this.tone(150, 0.32, 0.13, 'sawtooth', 0, 760);
+          this.noise(0.2, 0.12, 1900);
+          break;
+        case 'net':
+          [340, 255, 190].forEach((frequency, index) => this.tone(frequency, 0.18, 0.1, 'triangle', index * 0.09, frequency * 0.7));
+          break;
+        case 'siphon':
+          [900, 670, 450, 230].forEach((frequency, index) => this.tone(frequency, 0.16, 0.085, 'sine', index * 0.075, frequency + 130));
+          break;
+        case 'riptide':
+          this.tone(420, 0.25, 0.09, 'triangle', 0, 190);
+          this.tone(190, 0.3, 0.09, 'triangle', 0.2, 540);
+          break;
+        case 'shield':
+          [520, 780, 1040].forEach((frequency, index) => this.tone(frequency, 0.32, 0.08, 'sine', index * 0.055));
+          break;
+        case 'turbo':
+          this.noise(0.26, 0.14, 1400);
+          this.tone(90, 0.5, 0.13, 'triangle', 0, 900);
+          break;
+        case 'magnet':
+          [1320, 990, 1320, 1760].forEach((frequency, index) => this.tone(frequency, 0.13, 0.075, 'sine', index * 0.065));
+          break;
+        case 'anchor':
+          this.noise(0.18, 0.22, 260);
+          this.tone(170, 0.32, 0.16, 'triangle', 0, 42);
+          this.tone(310, 0.16, 0.075, 'square', 0.08, 120);
+          break;
         default: break;
       }
     }
 
     update(state, dt) {
       if (!this.context || !this.engine || !this.unlocked) return;
-      const running = Boolean(state && state.running);
-      const throttle = Boolean(state && state.throttle);
-      const speed = clamp(Math.abs(Number.isFinite(state && state.speed) ? state.speed : 0), 0, 2000);
+      const players = state && Array.isArray(state.players) ? state.players.slice(0, 2) : [state];
+      const active = players.map(player => Boolean(player && player.running && (!state || state.running !== false)));
+      const running = active.some(Boolean);
+      const throttle = players.some((player, index) => active[index] && player.throttle);
       const now = this.context.currentTime;
-      this.engine.frequency.setTargetAtTime(39 + Math.min(180, speed * 0.28) + (throttle ? 24 : 0), now, 0.1);
-      this.engineGain.gain.setTargetAtTime(running ? ENGINE_VOLUME * (throttle ? 1 : 0.35) : 0, now, 0.06);
+      const mix = players.length > 1 ? 0.7 : 1;
+      this.engines.forEach((engine, index) => {
+        const player = players[index];
+        const accelerating = Boolean(player && player.throttle);
+        const speed = clamp(Math.abs(Number.isFinite(player && player.speed) ? player.speed : 0), 0, 2000);
+        engine.frequency.setTargetAtTime(39 + index * 8 + Math.min(180, speed * 0.28) + (accelerating ? 24 : 0), now, 0.1);
+        this.engineGains[index].gain.setTargetAtTime(active[index] ? ENGINE_VOLUME * mix * (accelerating ? 1 : 0.35) : 0, now, 0.06);
+      });
       if (!running || this.muted) { this.heartbeatTime = 0; this.bubbleTime = 0; return; }
       const delta = clamp(Number.isFinite(dt) ? dt : 0, 0, 0.1);
       this.bubbleTime -= delta;
       if (throttle && this.bubbleTime <= 0) { this.play('bubble'); this.bubbleTime = 0.19 + Math.random() * 0.2; }
       this.heartbeatTime -= delta;
-      const oxygen = Number.isFinite(state.oxygenFraction) ? state.oxygenFraction : 1;
+      const oxygen = Math.min(...players.map((player, index) => active[index] && Number.isFinite(player.oxygenFraction) ? player.oxygenFraction : 1));
       if (oxygen < 0.25 && this.heartbeatTime <= 0) {
         this.play('heartbeat');
         this.heartbeatTime = 0.57 + Math.max(0, oxygen) * 1.5;
@@ -147,9 +196,9 @@
 
     suspend() {
       if (!this.context) return;
-      if (this.engineGain) {
-        this.engineGain.gain.cancelScheduledValues(this.context.currentTime);
-        this.engineGain.gain.setTargetAtTime(0, this.context.currentTime, 0.02);
+      for (const gain of this.engineGains) {
+        gain.gain.cancelScheduledValues(this.context.currentTime);
+        gain.gain.setTargetAtTime(0, this.context.currentTime, 0.02);
       }
       for (const source of this.voices) {
         try { source.stop(); } catch (_) { /* An ended voice is already disconnected. */ }

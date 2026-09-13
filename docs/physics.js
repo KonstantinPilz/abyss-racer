@@ -34,9 +34,52 @@
       this.sleepTime = 0; this.sleeping = false;
       this.contactTime = 0; this.domeContacts = []; this.strandedTime = 0;
       this.invertedDomeContact = false;
+      this.gravityFlipped = false; this.gravityTurn = 0; this.gravityGrace = 0; this.jetThrust = 0;
       this.savePrevious();
     }
-    gravity() { return this.terrain.stage.gravity * (1 - this.stats.buoyancy); }
+    gravity() { return this.terrain.stage.gravity * (1 - this.stats.buoyancy) * (this.gravityFlipped ? -1 : 1); }
+    roof(x) {
+      return this.gravityFlipped && this.terrain.gravityCeiling ? this.terrain.gravityCeiling(x) : this.terrain.ceiling(x);
+    }
+    setGravityFlipped(flipped) {
+      flipped = !!flipped;
+      if (this.gravityFlipped === flipped || this.crashed) return;
+      this.gravityFlipped = flipped;
+      this.gravityTurn = 0.6; this.gravityGrace = 1.25;
+      this.domeContacts = []; this.strandedTime = 0;
+      this.sleeping = false; this.sleepTime = 0;
+      this.grounded = false; this.bodyGrounded = false;
+      this.omega = 0;
+      this.vy *= 0.25;
+      this.wheels.forEach(function (wheel) { wheel.vy *= 0.25; wheel.grounded = false; });
+    }
+    turnGravity(dt) {
+      if (!this.gravityTurn) return;
+      const before = this.angle;
+      const target = this.gravityFlipped ? Math.PI : 0;
+      let difference = Math.atan2(Math.sin(target - before), Math.cos(target - before));
+      if (Math.abs(difference) > 3.13) difference = -Math.PI;
+      const rotation = difference * Math.min(1, dt / this.gravityTurn);
+      this.angle += rotation;
+      const c = Math.cos(rotation), s = Math.sin(rotation);
+      for (const wheel of this.wheels) {
+        const dx = wheel.x - this.x, dy = wheel.y - this.y;
+        wheel.x = this.x + dx * c - dy * s;
+        wheel.y = this.y + dx * s + dy * c;
+        wheel.vx = this.vx; wheel.vy = this.vy;
+        wheel.omega = -this.vx / wheel.radius * (this.gravityFlipped ? 1 : -1);
+      }
+      // Leave room for the entire turning vehicle near either surface. The
+      // displacement is small and interpolated; no collision impulse is added.
+      const clearance = Math.hypot(this.stats.wheelbase / 2, this.stats.restLength + MOUNT_Y) + this.stats.radius + 3;
+      const roof = this.terrain.gravityCeiling ? this.terrain.gravityCeiling(this.x) : this.terrain.ceiling(this.x);
+      const nextY = clamp(this.y, roof + clearance, this.terrain.height(this.x) - clearance);
+      const shift = nextY - this.y;
+      this.y = nextY;
+      this.wheels.forEach(function (wheel) { wheel.y += shift; });
+      this.omega = 0;
+      this.gravityTurn = Math.max(0, this.gravityTurn - dt);
+    }
     savePrevious() {
       this.prev = { x: this.x, y: this.y, angle: this.angle, wheels: this.wheels.map(function (w) { return { x: w.x, y: w.y, angle: w.angle }; }) };
     }
@@ -47,16 +90,20 @@
       if (this.crashed) return;
       dt = clamp(Number(dt) || AR.FIXED_DT, 0, 1 / 30);
       input = input || {};
+      this.gravityGrace = Math.max(0, this.gravityGrace - dt);
+      this.sharkBite = Math.max(0, (this.sharkBite || 0) - dt);
+      this.turnGravity(dt);
       this.cooldown = Math.max(0, this.cooldown - dt);
       this.oxygen = Math.max(0, this.oxygen - dt * (input.throttle ? 1.02 : 0.85));
       if (this.oxygen <= 0) { this.crashed = 'Oxygen depleted'; return; }
       if (input.burst && this.cooldown === 0 && this.oxygen > 8) {
         this.oxygen -= 8;
-        this.vy -= this.stats.burst;
-        this.wheels.forEach((w) => { w.vy -= this.stats.burst * 0.75; });
+        const direction = this.gravityFlipped ? -1 : 1;
+        this.vy -= this.stats.burst * direction;
+        this.wheels.forEach((w) => { w.vy -= this.stats.burst * 0.75 * direction; });
         this.cooldown = this.stats.cooldown; this.burstFired = true;
       }
-      if (input.throttle || input.brake || this.burstFired || this.terrain.vent(this.x) > 0) {
+      if (input.throttle || input.brake || this.burstFired || this.gravityTurn || this.terrain.vent(this.x) > 0) {
         this.sleeping = false; this.sleepTime = 0;
       }
       if (this.sleeping) { this.updateContactTimers(dt); return; }
@@ -95,8 +142,8 @@
       const domeTime = this.domeContacts.reduce(function (total, contact) { return total + contact.end - contact.start; }, 0);
       const wedged = this.bodyGrounded && !this.wheels.some(function (w) { return w.grounded; }) && Math.abs(this.vx) < 15;
       this.strandedTime = wedged ? this.strandedTime + dt : 0;
-      if (!this.crashed && domeTime > 0.6 + 1e-9) this.crashed = 'Hull crushed';
-      if (!this.crashed && this.strandedTime > 2.5 + 1e-9) this.crashed = 'Stranded';
+      if (!this.crashed && !this.gravityGrace && domeTime > 0.6 + 1e-9) this.crashed = 'Hull crushed';
+      if (!this.crashed && !this.gravityGrace && this.strandedTime > 2.5 + 1e-9) this.crashed = 'Stranded';
     }
     substep(input, dt) {
       const stats = this.stats;
@@ -110,12 +157,22 @@
       let forceY = this.mass * (gravity - vent * ventReach - this.vy * (stats.id === 'manta' && this.vy > 0 ? 1.35 : 0.43));
       let torque = -this.omega * this.inertia * (this.grounded ? 1.3 : 0.62);
       const control = (input.throttle ? 1 : 0) - (input.brake ? 1 : 0);
+      const orientation = this.gravityFlipped ? -1 : 1;
+      const jet = this.jetThrust === true ? 200 : clamp(Number(this.jetThrust) || 0, 0, 360);
+      const jetLimit = Math.max(350, stats.topSpeed * 1.4);
+      const jetAcceleration = control * jet * clamp(1 - Math.max(0, this.vx * control) / jetLimit, 0, 1);
+      forceX += this.mass * jetAcceleration;
+      if (this.gravityFlipped && !this.grounded && !this.gravityTurn) {
+        const roofSlope = this.terrain.gravityCeiling ? (this.terrain.gravityCeiling(this.x + 4) - this.terrain.gravityCeiling(this.x - 4)) / 8 : 0;
+        const error = Math.atan2(Math.sin(Math.PI + Math.atan(roofSlope) - this.angle), Math.cos(Math.PI + Math.atan(roofSlope) - this.angle));
+        torque += this.inertia * (error * 16 - this.omega * 6);
+      }
       if (control) {
         const airControl = (stats.id === 'bike' ? 5.5 : stats.id === 'truck' ? 3.1 : 4.25) * 0.8;
-        if (!this.grounded) torque -= control * this.inertia * airControl;
+        if (!this.grounded && !this.gravityTurn) torque -= control * this.inertia * airControl * (this.gravityFlipped ? 0.2 : 1);
         // A small real propeller force also permits recovery on slippery ice.
-        forceX += control * this.mass * (12 + (stats.thrustLevel || 0) * 2.3) * c;
-        forceY += control * this.mass * (12 + (stats.thrustLevel || 0) * 2.3) * s;
+        forceX += control * this.mass * (12 + (stats.thrustLevel || 0) * 2.3) * c * orientation;
+        forceY += control * this.mass * (12 + (stats.thrustLevel || 0) * 2.3) * s * orientation;
       }
       for (const w of this.wheels) {
         const rx = w.x - this.x, ry = w.y - this.y;
@@ -125,18 +182,19 @@
         const rate = relativeX * downX + relativeY * downY;
         const springForce = clamp(stats.spring * (stats.restLength - length) - stats.damping * rate, -this.mass * 3500, this.mass * 3500);
         const fx = springForce * downX, fy = springForce * downY;
-        w.vx += (fx / this.wheelMass - w.vx * 0.075) * dt;
+        w.vx += (fx / this.wheelMass - w.vx * 0.075 + jetAcceleration) * dt;
         // Apply the same vent acceleration to the chassis and both wheels so
         // the updraft cannot create differential lift or pitch the suspension.
         w.vy += (fy / this.wheelMass + gravity - vent * ventReach - w.vy * 0.16) * dt;
         forceX -= fx; forceY -= fy;
         torque -= rx * fy - ry * fx;
         if (control) {
-          const wheelSpeed = w.omega * w.radius;
+          const wheelSpeed = w.omega * w.radius * orientation;
           const target = control > 0 ? stats.topSpeed : -stats.topSpeed * 0.42;
           let drive = stats.torque * control * clamp(1 - wheelSpeed / target, 0, 1.6);
           // Braking gets immediate grip before engaging reverse.
           if (input.brake && wheelSpeed > 12) drive = -stats.torque * 1.45;
+          drive *= orientation;
           w.omega += drive / this.wheelInertia * dt;
           torque -= drive * 0.09;
         }
@@ -147,7 +205,8 @@
       this.vy += forceY * this.inverseMass * dt;
       this.omega = clamp(this.omega + torque * this.inverseInertia * dt, -11, 11);
       this.x += this.vx * dt; this.y += this.vy * dt; this.angle += this.omega * dt;
-      for (const w of this.wheels) { w.x += w.vx * dt; w.y += w.vy * dt; w.angle += w.omega * dt; w.grounded = false; }
+      this.collisionPrevious = { x: this.x - this.vx * dt, y: this.y - this.vy * dt, angle: this.angle - this.omega * dt };
+      for (const w of this.wheels) { w.collisionX = w.x; w.collisionY = w.y; w.x += w.vx * dt; w.y += w.vy * dt; w.angle += w.omega * dt; w.grounded = false; }
       for (let iteration = 0; iteration < SOLVER_ITERATIONS; iteration++) {
         for (const w of this.wheels) this.suspensionConstraint(w);
         this.bodyCollisions();
@@ -179,11 +238,33 @@
       if (length < low || length > high) this.jointImpulse(w, -s, c, length - clamp(length, low, high), 0.85);
     }
     wheelCollision(w, dt) {
-      const slope = this.terrain.slope(w.x);
+      this.supportWheel(w, this.terrain.height(w.x), this.terrain.slope(w.x), false);
+      if (!this.gravityFlipped && this.terrain.platformsBetween) {
+        const previousPlatform = w.platformId;
+        w.platformId = null;
+        for (const platform of this.terrain.platformsBetween(w.x, w.x)) {
+          const height = this.terrain.platformHeight(w.x, platform), slope = this.terrain.platformSlope(w.x, platform);
+          const previousHeight = this.terrain.platformHeight(w.collisionX === undefined ? w.x : w.collisionX, platform);
+          const previousBottom = (w.collisionY === undefined ? w.y : w.collisionY) + w.radius;
+          if (previousPlatform !== platform.id && !(previousBottom <= previousHeight + 0.2 && w.vy - slope * w.vx >= -1)) continue;
+          if (this.supportWheel(w, height, slope, false)) w.platformId = platform.id;
+        }
+      }
+      const ceiling = this.roof(w.x);
+      if (this.gravityFlipped) {
+        const slope = (this.roof(w.x + 4) - this.roof(w.x - 4)) / 8;
+        this.supportWheel(w, ceiling, slope, true);
+      } else if (w.y - w.radius < ceiling) {
+        w.y = ceiling + w.radius;
+        if (w.vy < 0) w.vy = 0;
+      }
+    }
+    supportWheel(w, height, slope, ceiling) {
       const scale = Math.sqrt(1 + slope * slope);
-      const nx = slope / scale, ny = -1 / scale;
+      const side = ceiling ? -1 : 1;
+      const nx = slope / scale * side, ny = -1 / scale * side;
       const tx = 1 / scale, ty = slope / scale;
-      const penetration = w.radius - (this.terrain.height(w.x) - w.y) / scale;
+      const penetration = w.radius - (height - w.y) / scale * side;
       if (penetration > -0.06) {
         w.grounded = true;
         if (penetration > 0) { w.x += nx * penetration; w.y += ny * penetration; }
@@ -194,21 +275,18 @@
           w.vx -= normalSpeed * nx; w.vy -= normalSpeed * ny;
         }
         const tangentSpeed = w.vx * tx + w.vy * ty;
-        const slip = tangentSpeed - w.omega * w.radius;
+        const slip = tangentSpeed - w.omega * w.radius * side;
         const effectiveMass = 1 / this.wheelMass + w.radius * w.radius / this.wheelInertia;
         const grip = this.stats.grip * this.terrain.stage.friction;
         const friction = clamp(-slip / effectiveMass, -grip * normalImpulse, grip * normalImpulse);
         w.vx += tx * friction / this.wheelMass; w.vy += ty * friction / this.wheelMass;
-        w.omega -= friction * w.radius / this.wheelInertia;
+        w.omega -= friction * w.radius / this.wheelInertia * side;
         // Rolling resistance is proportional to supported load, not frame count.
         const rolling = Math.min(Math.abs(w.omega), normalImpulse * 0.014 * w.radius / this.wheelInertia);
         w.omega -= Math.sign(w.omega) * rolling;
+        return true;
       }
-      const ceiling = this.terrain.ceiling(w.x);
-      if (w.y - w.radius < ceiling) {
-        w.y = ceiling + w.radius;
-        if (w.vy < 0) w.vy = 0;
-      }
+      return false;
     }
     bodyContact(localX, localY, radius, dome) {
       const c = Math.cos(this.angle), s = Math.sin(this.angle);
@@ -217,10 +295,26 @@
       const slope = this.terrain.slope(x), scale = Math.sqrt(1 + slope * slope);
       const groundPenetration = radius - (this.terrain.height(x) - y) / scale;
       if (groundPenetration > 0) this.resolveBodyContact(rx, ry, slope / scale, -1 / scale, groundPenetration, dome && c < 0.2);
-      const ceiling = this.terrain.ceiling(x);
+      if (!this.gravityFlipped && this.terrain.platformsBetween) for (const platform of this.terrain.platformsBetween(x, x)) {
+        const platformY = this.terrain.platformHeight(x, platform), platformSlope = this.terrain.platformSlope(x, platform);
+        const previous = this.collisionPrevious || this;
+        const oldX = previous.x + localX * Math.cos(previous.angle) - localY * Math.sin(previous.angle);
+        const oldBottom = previous.y + localX * Math.sin(previous.angle) + localY * Math.cos(previous.angle) + radius;
+        const riding = this.wheels.some(function (wheel) { return wheel.platformId === platform.id; });
+        const wheelsAbove = this.wheels.every((wheel) => (wheel.collisionY === undefined ? wheel.y : wheel.collisionY) + wheel.radius <= this.terrain.platformHeight(wheel.collisionX === undefined ? wheel.x : wheel.collisionX, platform) + 0.2);
+        if ((!riding && !wheelsAbove) || !(oldBottom <= this.terrain.platformHeight(oldX, platform) + 0.2 || (riding && y < platformY))) continue;
+        if (!riding && this.vy - platformSlope * this.vx < -1) continue;
+        const platformScale = Math.sqrt(1 + platformSlope * platformSlope);
+        const penetration = radius - (platformY - y) / platformScale;
+        if (penetration > 0) {
+          this.resolveBodyContact(rx, ry, platformSlope / platformScale, -1 / platformScale, penetration, dome && c < 0.2);
+          if (dome && c < INVERTED_COS) this.invertedDomeContact = true;
+        }
+      }
+      const ceiling = this.roof(x);
       const ceilingPenetration = ceiling - (y - radius);
-      if (ceilingPenetration > 0) this.resolveBodyContact(rx, ry, 0, 1, ceilingPenetration, dome);
-      if (dome && c < INVERTED_COS && (groundPenetration > 0 || ceilingPenetration > 0)) this.invertedDomeContact = true;
+      if (ceilingPenetration > 0) this.resolveBodyContact(rx, ry, 0, 1, ceilingPenetration, dome && (!this.gravityFlipped || c > -0.2));
+      if (dome && c * (this.gravityFlipped ? -1 : 1) < INVERTED_COS && (groundPenetration > 0 || ceilingPenetration > 0)) this.invertedDomeContact = true;
     }
     resolveBodyContact(rx, ry, nx, ny, penetration, vulnerable) {
       // Tire contact and hull contact are separate: an overturned rover can
@@ -237,7 +331,7 @@
         this.vx += nx * impulse * this.inverseMass; this.vy += ny * impulse * this.inverseMass;
         this.omega += lever * impulse * this.inverseInertia;
         this.impact = Math.max(this.impact, -normalSpeed);
-        if (vulnerable && -normalSpeed > 82) this.crashed = 'Hull crushed';
+        if (vulnerable && !this.gravityGrace && -normalSpeed > 82) this.crashed = 'Hull crushed';
         const tangentX = -ny, tangentY = nx;
         const tangentSpeed = this.vx * tangentX + this.vy * tangentY;
         const drag = clamp(tangentSpeed * this.mass * 0.12, -impulse * 0.32, impulse * 0.32);
@@ -253,7 +347,7 @@
       this.bodyContact(0, DOME_Y, DOME_RADIUS, true);
     }
     snapshot() {
-      return { x: this.x, y: this.y, vx: this.vx, vy: this.vy, angle: this.angle, omega: this.omega, oxygen: this.oxygen, grounded: this.grounded, bodyGrounded: this.bodyGrounded, crashed: this.crashed };
+      return { x: this.x, y: this.y, vx: this.vx, vy: this.vy, angle: this.angle, omega: this.omega, oxygen: this.oxygen, grounded: this.grounded, bodyGrounded: this.bodyGrounded, crashed: this.crashed, gravityFlipped: this.gravityFlipped, jetThrust: this.jetThrust };
     }
   }
   AR.Rover = Rover;

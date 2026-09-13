@@ -3,9 +3,9 @@
   const AR = root.AR = root.AR || {};
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
   const PHASES = ['COUNTDOWN', 'RUNNING', 'ROUND_RESULT', 'MATCH_RESULT', 'PAUSED'];
-  const EFFECTS = ['ink', 'net', 'riptide', 'shield', 'turbo', 'anchor', 'spawnShield', 'torpedo', 'hit', 'siphon', 'siphonGain', 'magnet', 'magnetGain', 'dodged', 'blocked'];
-  const ITEMS = ['', 'ink', 'torpedo', 'net', 'siphon', 'riptide', 'shield', 'turbo', 'magnet', 'anchor'];
-  const REASONS = ['', 'Hull crushed', 'Stranded', 'Oxygen depleted', 'Torpedoed!', 'Out of air'];
+  const EFFECTS = ['ink', 'net', 'riptide', 'shield', 'turbo', 'anchor', 'spawnShield', 'torpedo', 'hit', 'siphon', 'siphonGain', 'magnet', 'magnetGain', 'dodged', 'blocked', 'gravity', 'jet', 'fireCooldown', 'jumpCooldown'];
+  const ITEMS = ['', 'ink', 'torpedo', 'net', 'siphon', 'riptide', 'shield', 'turbo', 'magnet', 'anchor', 'gravity', 'jet'];
+  const REASONS = ['', 'Hull crushed', 'Stranded', 'Oxygen depleted', 'Torpedoed!', 'Out of air', 'Bubble hit', 'Hull lost'];
   const angle = n => Math.atan2(Math.sin(n), Math.cos(n));
   const lerpAngle = (a, b, t) => a + angle(b - a) * t;
 
@@ -55,7 +55,7 @@
       const u8 = x => put('Uint8', clamp(Math.round(x || 0), 0, 255));
       const u16 = x => put('Uint16', clamp(Math.round(x || 0), 0, 65535));
       const a16 = x => u16((angle(x || 0) + Math.PI) / (2 * Math.PI) * 65535);
-      u8(1); put('Uint32', epoch); put('Uint32', seq); put('Float32', now); u16(v.round); u8(PHASES.indexOf(v.phase));
+      u8(2); put('Uint32', epoch); put('Uint32', seq); put('Float32', now); u16(v.round); u8(PHASES.indexOf(v.phase));
       u16(v.phaseTime * 100); put('Float32', v.time); u8(v.scores[0]); u8(v.scores[1]); put('Uint32', ack.b); put('Uint32', ack.i);
       u8(v.shake * 255); u8(v.flash * 255);
       for (const p of v.players) {
@@ -65,14 +65,20 @@
         for (const w of r.wheels) { put('Int16', clamp(Math.round((w.x - r.x) * 10), -32768, 32767)); put('Int16', clamp(Math.round((w.y - r.y) * 10), -32768, 32767)); a16(w.angle); }
         u16(r.oxygen * 100); u8(r.cooldown * 10); u8(p.respawn * 50); u8(REASONS.indexOf(r.crashed));
         u8((p.out ? 1 : 0) | (p.catchup ? 2 : 0) | (p.slipstream ? 4 : 0) | (r.ghosting ? 8 : 0) | (r.grounded ? 16 : 0) | (p.respawnKind === 'blackout' ? 32 : p.respawnKind === 'crash' ? 64 : 0));
-        u8(ITEMS.indexOf(p.item || '')); u8(p.charges); u8(p.lives); u16(p.crashes); u16(p.blackouts); u16(p.itemsUsed);
+        u8(ITEMS.indexOf(p.item || '')); u8(p.charges); u8(p.lives); u8(p.facing < 0 ? 0 : 1); u16(p.crashes); u16(p.blackouts); u16(p.itemsUsed);
         put('Uint32', p.pearls); put('Uint32', Math.round(p.distance * 10));
         for (const key of EFFECTS) u8((p.effects[key] || 0) * 10);
       }
       // Visible projectiles only; the authoritative world is never capped.
       const shots = (v.projectiles || []).filter(q => v.players.some(p => Math.abs(p.rover.x - q.x) < 2600)).slice(0, 12);
       u8(shots.length);
-      for (const q of shots) { u16(q.id); u8((q.type === 'anchor' ? 2 : 0) | q.owner); put('Int32', Math.round(q.x * 10)); put('Int32', Math.round(q.y * 10)); a16(q.angle || (q.direction < 0 ? Math.PI : 0)); u8(q.life * 10); }
+      for (const q of shots) { u16(q.id); u8((q.type === 'anchor' ? 2 : q.type === 'bubble' ? 4 : 0) | q.owner); put('Int32', Math.round(q.x * 10)); put('Int32', Math.round(q.y * 10)); a16(q.angle || (q.direction < 0 ? Math.PI : 0)); u8(q.life * 10); }
+      const sharks = (v.hazards?.sharks || []).slice(0, 4);
+      u8(sharks.length);
+      for (const shark of sharks) {
+        put('Int32', shark.id); put('Int32', Math.round(shark.x * 10)); put('Int32', Math.round(shark.y * 10));
+        u8(['patrol', 'warning', 'lunge', 'recover'].indexOf(shark.phase)); u8(shark.direction < 0 ? 0 : 1); u8(shark.timer * 10);
+      }
       // Bounded redundant delta hints. The complete batch also travels reliably,
       // so a busy frame or dropped snapshot cannot lose a pickup or an effect.
       let hints = { p: extras.pickups || [], e: extras.events || [] };
@@ -89,19 +95,21 @@
       const d = new DataView(bytes); let o = 0;
       const get = type => { const n = d['get' + type](o, true); o += { Uint8: 1, Uint16: 2, Int16: 2, Uint32: 4, Int32: 4, Float32: 4 }[type]; return n; };
       const u8 = () => get('Uint8'), u16 = () => get('Uint16'), a16 = () => u16() / 65535 * 2 * Math.PI - Math.PI;
-      if (u8() !== 1) throw new Error('Snapshot version mismatch');
+      if (u8() !== 2) throw new Error('Snapshot version mismatch');
       const s = { epoch: get('Uint32'), seq: get('Uint32'), t: get('Float32'), round: u16(), phase: PHASES[u8()], phaseTime: u16() / 100, time: get('Float32'), scores: [u8(), u8()], ack: { b: get('Uint32'), i: get('Uint32') }, shake: u8() / 255, flash: u8() / 255, players: [] };
       for (let i = 0; i < 2; i++) {
         const r = { x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), vx: get('Int16'), vy: get('Int16'), wheels: [] };
         for (let j = 0; j < 2; j++) r.wheels.push({ x: r.x + get('Int16') / 10, y: r.y + get('Int16') / 10, angle: a16() });
         r.oxygen = u16() / 100; r.cooldown = u8() / 10; const respawn = u8() / 50; r.crashed = REASONS[u8()] || '';
         const flags = u8(); r.ghosting = !!(flags & 8); r.grounded = !!(flags & 16);
-        const p = { rover: r, respawn, out: !!(flags & 1), catchup: !!(flags & 2), slipstream: !!(flags & 4), respawnKind: flags & 32 ? 'blackout' : flags & 64 ? 'crash' : '', item: ITEMS[u8()] || null, charges: u8(), lives: u8(), crashes: u16(), blackouts: u16(), itemsUsed: u16(), pearls: get('Uint32'), distance: get('Uint32') / 10, effects: {} };
+        const p = { rover: r, respawn, out: !!(flags & 1), catchup: !!(flags & 2), slipstream: !!(flags & 4), respawnKind: flags & 32 ? 'blackout' : flags & 64 ? 'crash' : '', item: ITEMS[u8()] || null, charges: u8(), lives: u8(), facing: u8() ? 1 : -1, crashes: u16(), blackouts: u16(), itemsUsed: u16(), pearls: get('Uint32'), distance: get('Uint32') / 10, effects: {} };
         for (const key of EFFECTS) p.effects[key] = u8() / 10;
         s.players.push(p);
       }
       s.projectiles = []; const n = u8(); if (n > 12) throw new Error('Invalid projectile count');
-      for (let i = 0; i < n; i++) { const id = u16(), flags = u8(); s.projectiles.push({ id, type: flags & 2 ? 'anchor' : 'torpedo', owner: flags & 1, x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), life: u8() / 10 }); }
+      for (let i = 0; i < n; i++) { const id = u16(), flags = u8(); s.projectiles.push({ id, type: flags & 4 ? 'bubble' : flags & 2 ? 'anchor' : 'torpedo', owner: flags & 1, x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), life: u8() / 10 }); }
+      s.sharks = []; const sharks = u8(); if (sharks > 4) throw new Error('Invalid shark count');
+      for (let i = 0; i < sharks; i++) s.sharks.push({ id: get('Int32'), x: get('Int32') / 10, y: get('Int32') / 10, phase: ['patrol', 'warning', 'lunge', 'recover'][u8()], direction: u8() ? 1 : -1, timer: u8() / 10 });
       const length = u16(); if (o + length !== bytes.byteLength || !s.phase || !Number.isFinite(s.t + s.time)) throw new Error('Invalid snapshot data');
       const hints = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes, o, length))); s.pickups = hints.p; s.events = hints.e;
       return s;
@@ -139,6 +147,10 @@
         if (!old) return q;
         const f = a === b ? 1 + late * 1000 / Math.max(1, b.t - previous.t) : t;
         return { ...q, x: old.x + (q.x - old.x) * f, y: old.y + (q.y - old.y) * f, angle: lerpAngle(old.angle, q.angle, Math.min(1, f)) };
+      });
+      out.sharks = (b.sharks || []).map(shark => {
+        const old = a.sharks?.find(q => q.id === shark.id);
+        return old ? { ...shark, x: old.x + (shark.x - old.x) * t, y: old.y + (shark.y - old.y) * t } : shark;
       });
       return out;
     }

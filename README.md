@@ -1,6 +1,6 @@
 # Abyss Racer
 
-A complete underwater driving game made with plain HTML, CSS, Canvas 2D, and WebAudio. Drive a two-wheeled deep-sea rover across an endless seabed, collect pearls and oxygen, balance floaty jumps, and buy new vehicles, worlds, and upgrades. Local keyboard Versus adds a shared physics world, split-screen cameras, three match modes, and nine competitive items. **Play on two phones** brings the same rivalry to two devices, each with its own full-screen view.
+A complete underwater driving game made with plain HTML, CSS, Canvas 2D, and WebAudio. Drive a two-wheeled deep-sea rover across an endless seabed, collect pearls and oxygen, balance floaty jumps, and buy new vehicles, worlds, and upgrades. Local keyboard Versus adds a shared physics world, split-screen cameras, four match modes, and eleven competitive items. **Play on two phones** brings the same rivalry to two devices, each with its own full-screen view.
 
 Open **[docs/index.html](docs/index.html)** directly in a browser. Solo and local Versus need no installation, libraries, network access, server, or build step. Online Versus requires internet access and downloads PeerJS only when creating or joining a room. GitHub Pages can serve the repository's `docs/` folder unchanged.
 
@@ -18,16 +18,18 @@ Ease off the gas over crests. Tap brake in the air to lower the nose before land
 
 A hard dome impact against the seabed or ice ceiling immediately ends the run with **Hull crushed**. Gentle dome contact also crushes the hull when the chassis is inverted (its angle wrapped to ±180° exceeds 95° in magnitude) for more than 0.6 seconds of contact within any 1.5-second window. Brief brushes allow flip recovery. **Stranded** ends a run after more than 2.5 continuous seconds with the hull supported, both wheels off the ground, and horizontal speed below 15 px/s (1.5 m/s). An empty oxygen reserve also ends the run. Hidden tabs pause automatically and require Resume when you return.
 
-Mouse, keyboard, and touch work in the menus. Garage tabs support arrow keys and Home/End; dialogs trap keyboard focus and close with Escape. Touch pedals support simultaneous pointers and release on cancellation or focus loss.
+Mouse, keyboard, and touch work in the menus. Garage tabs support arrow keys and Home/End; dialogs trap keyboard focus and close with Escape. Touch pedals support simultaneous pointers and release on cancellation or focus loss. Gameplay disables text selection and the iOS touch callout; text fields and room links remain selectable.
 
 ## Worlds and progression
 
 1. **Coral Reef:** gentle hills, coral gardens, and surface light.
-2. **Kelp Forest:** large swells and tall kelp.
-3. **Shipwreck Graveyard:** broken hulls, exposed rocks, and more frequent ramps.
+2. **Kelp Forest:** large swells, tall kelp, occasional upper root routes, and bubbling hot springs that help you reach them.
+3. **Shipwreck Graveyard:** broken hulls, exposed rocks, more frequent ramps, and occasional upper wreck decks. Jump through a deck from below and land on top, or follow the seabed underneath.
 4. **Volcanic Vents:** volcanic ridges and thermal updrafts, with no active vents in the first 220 m (the first begins at 242 m). Base lift is halved; it scales gradually from ×1.0 at 220 m to ×1.5 at 1,500 m. Updrafts accelerate the chassis and both wheels equally, without adding pitch torque. The level-0 Reef Rover's first vent jump lasts 1.39 seconds with the QA driver below.
-5. **Ice Shelf:** low-friction ground and a solid ice ceiling.
+5. **Ice Shelf:** low-friction ground and a solid ice ceiling that follows tall hills to preserve at least 250 px of clearance, even far into a run.
 6. **Abyssal Trench:** steep terrain, anglerfish, and headlight navigation.
+
+In Coral Reef and Abyssal Trench, sharks appear beyond the opening 220 m. A flashing warning gives you just over a second to jump or change course before a straight lunge. A bite costs up to 7 oxygen and gives a small shove; it cannot directly empty your tank, and the same rover has four seconds of protection against another bite. Sharks and hot springs work in solo and racing Versus; Bubble Battle uses its own clear arena.
 
 The Reef Rover, Crab Crawler, Torpedo Bike, Abyss Truck, and Manta Glider have different masses, wheelbases, tires, torque, buoyancy, oxygen reserves, and handling. Each vehicle owns six independent upgrade tracks: engine, propeller/thrust, suspension, tires, oxygen, and ballast. Each track has 12 purchasable levels with escalating costs.
 
@@ -56,6 +58,7 @@ Controls use physical `event.code` values, so keyboard layouts do not change the
 | --- | --- |
 | **Race** · default | First to 500, 1,000, or 2,000 m wins. Empty oxygen causes a 4-second blackout, then a respawn at the same position with 60% air; nobody is eliminated. |
 | **Last Sub Standing** | Three lives, shown as O₂ tank icons. Oxygen drains 1.5× faster, with tanks at one-third the usual frequency. Empty oxygen costs a life: respawn after 4 seconds with 60% air, or eliminate on the final life. The last player with a life wins; simultaneous final losses compare distance. |
+| **Bubble Battle** | A bounded 2D arena with a bubble cannon on each rover. Three hull hits eliminate a player. Item fires a slow, straight shot in the last drive direction (0.8 s reload); Ballast jumps with a 1 s recharge and no oxygen cost. Hull crashes also cost a hit. Surviving a hit respawns you after 1.2 s with 1.5 s protection. After 120 s, more remaining hull wins; equal hull replays the round. |
 | **Pearl Rush** | Most pearls after 90 seconds wins. Pickups are shared: collecting one removes it for both players. Empty oxygen causes the same 4-second blackout and 60% air respawn. Scoring resumes afterward; the timer continues through blackouts. |
 
 Choose one round, best of 3, or best of 5; the default is best of 3. A dead heat awards neither player a point and adds another round. Each round starts with **Round N — Dive!** and a frozen **3–2–1–GO** countdown. Round results show the winner, score, distances, crashes, blackouts, items used, and pearls for 3 seconds before the next countdown or match results. Match results include best distance, items landed, crashes, blackouts, and torpedoes dodged, with **Rematch**, **Change setup**, and **Title** actions.
@@ -66,9 +69,9 @@ A crash costs 2.5 seconds, then respawns the rover upright at the crash position
 
 ### Items
 
-Glowing **?** crates appear approximately every 120–200 m, with extra floating crates over ramps. There is one item slot; a crate is ignored while holding an item. Crates become more helpful as the current gap grows: from 20 m behind they favour Turbo Current, Torpedoes and Jellyfish Nets; at 60 m behind they give 50% Turbo, 30% Torpedo and 20% Net. Smaller gaps retain the varied trailing table, while the leader gets more shields, turbo, and anchors. Every item has a distinct slot icon and synth cue, a shared toast, and visual feedback.
+Glowing **?** crates appear approximately every 120–200 m, with extra floating crates over ramps. There is one item slot; a crate is ignored while holding an item. Each diver can use the same crate independently: it disappears from your own view for two seconds after collection, then refills. Your opponent can collect immediately, so following closely never locks them out. Pearls and oxygen remain shared. Crate cooldowns freeze when paused, survive online reconnection, and reset each round. Crates become more helpful as the current gap grows: from 20 m behind they favour Turbo Current, Torpedoes and Jellyfish Nets; at 60 m behind they give 50% Turbo, 30% Torpedo and 20% Net. Smaller gaps retain the varied trailing table, while the leader gets more shields, turbo, and anchors. Every item has a distinct slot icon and synth cue, a shared toast, and visual feedback.
 
-**Catch-up delivery:** stay at least 60 m behind for six continuous seconds with an empty item slot to receive a held **Turbo Current**, even if the leader collected all the crates. Use the normal Item control to activate it. Deliveries are at least 12 seconds apart and never replace a held item. Both racers must be active; a respawn or closing the gap below 60 m resets the six-second wait. Pause freezes the timers and each round resets them. This applies to all three modes in local and online Versus, using current progress from each racer's own start.
+**Catch-up delivery:** stay at least 60 m behind for six continuous seconds with an empty item slot to receive a held **Turbo Current**, even if the leader collected all the crates. Use the normal Item control to activate it. Deliveries are at least 12 seconds apart and never replace a held item. Both racers must be active; a respawn or closing the gap below 60 m resets the six-second wait. Pause freezes the timers and each round resets them. This applies to all three racing modes in local and online Versus, using current progress from each racer's own start.
 
 | Item | Effect |
 | --- | --- |
@@ -80,6 +83,8 @@ Glowing **?** crates appear approximately every 120–200 m, with extra floating
 | **Bubble Shield** | Blocks the next hostile item or projectile, or expires after **8 s**. |
 | **Turbo Current** | Adds **60% torque** and **40% top speed** for **3 s**, with speed lines. |
 | **Pearl Magnet** | In Pearl Rush, steals **30%** of the opponent's round pearls, rounded down. Replaced by Turbo Current in other modes. A blacked-out user cannot use items until respawning. |
+| **Gravity Flip** | Turns your own rover upside down for **6 s**, reverses gravity, and gives your wheels traction along the ice ceiling or a glowing current overhead. Gas still moves right and Brake reverses left. A brief guided turn safely restores upright orientation at expiry. |
+| **Jet Drive** | Adds **4 s** of horizontal propeller thrust, including in midair. Hold Gas to push right or Brake to push left, regardless of the chassis angle; lift and pitch controls still work. |
 | **Anchor Drop** | **Two uses per pickup**. Each drops an anchor behind the rover for **15 s**; an opponent hitting it takes a hard stop and bounce. |
 
 ## Play on two phones (online Versus)
@@ -92,9 +97,9 @@ Each diver chooses their own vehicle. The host chooses ocean, round mode, distan
 
 Both screens show one full-screen viewport, their own oxygen/distance/item HUD, and the opponent-awareness arrow. Hold **Brake** or **Gas**, and tap **Ballast** or **Item**. Keyboard users can use either local Versus key set (A/D/W/S or arrows); Space also fires ballast. P/Escape pauses or resumes both divers, and M mutes your device. Touch pedals support multiple pointers and cancellation, account for safe areas, prevent scroll/zoom while driving, and use the dynamic viewport height. Portrait remains playable with a small rotation hint. Screen wake lock is requested where available.
 
-The host runs the **unchanged 120 Hz Versus physics and match rules** for both rovers, shared pickups, items, projectiles, oxygen/respawns, scores, and rounds. The guest never steps physics or decides outcomes. It sends held controls at approximately 30 Hz; input changes also travel immediately on the event channel. Cumulative sequence counters carry every burst/item edge across lost or reordered input updates, and the host releases held guest controls after 400 ms without input. The guest interpolates a short snapshot history 100 ms behind its estimated host clock and extrapolates at most 150 ms before freezing. Rovers, wheels and projectiles interpolate; crashes/respawns snap across discontinuities.
+The host runs the **shared 120 Hz Versus physics and match rules** for both rovers, shared pickups, items, projectiles, oxygen/respawns, scores, and rounds. The guest never steps physics or decides outcomes. It sends held controls at approximately 30 Hz; input changes also travel immediately on the event channel. Cumulative sequence counters carry every burst/item edge across lost or reordered input updates, and the host releases held guest controls after 400 ms without input. The guest interpolates a short snapshot history 100 ms behind its estimated host clock and extrapolates at most 150 ms before freezing. Rovers, wheels and projectiles interpolate; crashes/respawns snap across discontinuities.
 
-Host snapshots run at **20 Hz**, normally about **180–185 bytes** of binary payload, bounded below 600 bytes. Positions have 1 cm precision in game metres; angles use 16 bits and effect timers use deciseconds. They carry both rover poses and HUD state, phase/timer/scores, up to 12 nearby projectiles, and bounded redundant pickup/event hints. Complete pickup/event batches and round/results metadata also use the reliable channel. Pickups regenerate deterministically from the shared stage/round seed, and the guest retains a collected-ID ledger. Event IDs deduplicate sounds, toasts, item hits and explosions. Reconnect synchronizes the complete collected ledger and paused world before resuming.
+Host snapshots run at **20 Hz** with compact binary payloads bounded below 600 bytes. Positions have 1 cm precision in game metres; angles use 16 bits and effect timers use deciseconds. They carry both rover poses and HUD state, phase/timer/scores, up to 12 nearby projectiles, and bounded redundant pickup/event hints, plus cannon direction, the new item timers, and up to four nearby sharks. Complete pickup/event batches and round/results metadata also use the reliable channel. Pickups regenerate deterministically from the shared stage/round seed, and the guest retains a collected-ID ledger. Event IDs deduplicate sounds, toasts, item hits and explosions. Reconnect synchronizes the complete collected ledger and paused world before resuming.
 
 Transport uses **PeerJS 1.5.4**, dynamically loaded from the requested cdnjs URL, with the default public PeerJS signalling broker, Google STUN, and Open Relay TURN on ports 80/443 (including TLS/TCP). Two binary data channels separate snapshots/input from ordered lobby/events. The state channel uses `reliable: false`; in this PeerJS release that means **unordered, with retransmission still enabled**, so stale sequence numbers are discarded and new state is skipped under backpressure. The event channel uses `reliable: true`. See the [PeerJS API](https://peerjs.com/client/api/peer) and [1.5.4 channel configuration](https://github.com/peers/peerjs/blob/v1.5.4/lib/negotiator.ts).
 
@@ -195,13 +200,15 @@ node tests/render-benchmark.cjs after-crisp
 
 `tests/render-benchmark.cjs` measures rendered animation frames over eight seconds after three seconds of warm-up, profiling renderer methods while both cameras follow a repeatable trajectory. Run it alone: concurrent Chromium tests compete for raster time. Its `AR.debug` fixture controls positions; simulation tick counters are never reported as rendered fps. JSON output goes to `/tmp/abyss-fix2-fps-<label>.json`.
 
-For local debugging, open `docs/index.html?debug=1`. `AR.inspect()` remains read-only and includes `players[]` and `versus` during competitive play. Only the debug query exposes `AR.debug.giveItem(playerIndex, itemId)`, `placePlayer(playerIndex, values)`, `crashPlayer(playerIndex)`, `setOxygen(playerIndex, value)`, `fireTorpedo(playerIndex)`, and `advance(seconds)`. Player indices are **0 for P1** and **1 for P2**; item IDs are `ink`, `torpedo`, `net`, `siphon`, `riptide`, `shield`, `turbo`, `magnet`, and `anchor`. `placePlayer` accepts `x`, `y`, `angle`, `vx`, `vy`, `oxygen`, and `pearls`; `advance` runs up to 120 seconds of fixed steps per call. Runtime mode IDs are `race`, `survival`, and `pearl`. See [tests/CONTRACT.md](tests/CONTRACT.md) for the script interfaces.
+For local debugging, open `docs/index.html?debug=1`. `AR.inspect()` remains read-only and includes `players[]` and `versus` during competitive play. Only the debug query exposes `AR.debug.giveItem(playerIndex, itemId)`, `placePlayer(playerIndex, values)`, `crashPlayer(playerIndex)`, `setOxygen(playerIndex, value)`, `fireTorpedo(playerIndex)`, and `advance(seconds)`. Player indices are **0 for P1** and **1 for P2**; item IDs are `ink`, `torpedo`, `net`, `siphon`, `riptide`, `shield`, `turbo`, `magnet`, `anchor`, `gravity`, and `jet`. `placePlayer` accepts `x`, `y`, `angle`, `vx`, `vy`, `oxygen`, and `pearls`; `advance` runs up to 120 seconds of fixed steps per call. Runtime mode IDs are `race`, `survival`, `pearl`, and `arena`. See [tests/CONTRACT.md](tests/CONTRACT.md) for the script interfaces.
 
 Run **all suites serially**, including the online real-broker test and rendering benchmark:
 
 ```sh
 node tests/run-all.cjs
 ```
+
+Player feature regressions are `tests/world-features.test.cjs`, `tests/player-features.test.cjs`, `tests/player-online.test.cjs`, and `tests/player-browser.test.cjs`. They cover collision clearance, second routes, lift, gravity traction/expiry, air thrust, shark warnings/dodges, fair crates, arena damage/jumps, online recovery under packet loss, and short phone controls. Screenshots go to `/tmp/abyss-suggestions-*.png`. The runner discovers every `tests/*.test.cjs` suite automatically.
 
 New independent entry points are `node tests/online.test.cjs`, `node tests/suggestions.test.cjs`, and `node tests/online-browser.test.cjs`. The loopback test instantiates separate host and guest controllers headlessly (the simpler debug option; there is no second in-page renderer or `?online=loopback` UI). `AR.LoopbackTransport.pair({ latency, jitter, loss, seed })` supports deterministic manual `pump(milliseconds)`, `drop()` and `reconnect()`. Its interface matches the PeerJS transport: `on`, `send`, `reconnect`, `close`, and `connected`.
 

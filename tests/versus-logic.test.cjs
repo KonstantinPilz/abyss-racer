@@ -226,7 +226,8 @@ test('Shared pearls are consumed once, and a held item leaves a crate available'
   v.pickups = [crate]; v.collect();
   assert.equal(p.item, 'ink'); assert(!crate.collected && !v.collected.has(crate.key));
   p.item = null; p.charges = 0; v.collect();
-  assert(crate.collected && v.collected.has(crate.key));
+  assert(!crate.collected && !v.collected.has(crate.key));
+  assert(v.crateCooldowns.get(crate.key)[0] > v.time);
   assert(AR.VERSUS_ITEMS[p.item]);
 });
 

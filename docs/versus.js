@@ -5,7 +5,7 @@
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const writeText = (node, value) => { const text = String(value); if (node.textContent !== text) node.textContent = text; };
   const fmt = n => Math.floor(n).toLocaleString('en-US');
-  const MODES = { race: 'Race', survival: 'Last Sub Standing', pearl: 'Pearl Rush' };
+  const MODES = { race: 'Race', survival: 'Last Sub Standing', pearl: 'Pearl Rush', arena: 'Bubble Battle' };
   const ITEMS = {
     ink: { name: 'Ink Cloud', icon: '●', description: 'Black out their view for 3.5 s.' },
     torpedo: { name: 'Torpedo', icon: '➤', description: 'Instant crash on hit. Jump to dodge!' },
@@ -15,12 +15,16 @@
     shield: { name: 'Bubble Shield', icon: '◉', description: 'Block one attack. Lasts 8 s.' },
     turbo: { name: 'Turbo Current', icon: '»', description: 'Extra torque and speed for 3 s.' },
     magnet: { name: 'Pearl Magnet', icon: '∩', description: 'Steal 30% of their round pearls.' },
-    anchor: { name: 'Anchor Drop', icon: '⚓', description: 'Two anchors. Each lasts 15 s.' }
+    anchor: { name: 'Anchor Drop', icon: '⚓', description: 'Two anchors. Each lasts 15 s.' },
+    gravity: { name: 'Gravity Flip', icon: '⇅', description: 'Flip your rover and drive on the roof for 6 s.' },
+    jet: { name: 'Jet Drive', icon: '♨', description: 'Directional thrust even in midair for 4 s.' },
+    bubble: { name: 'Bubble Cannon', icon: '⊙', description: 'Slow bubbles. Three hits knock a rival out.' }
   };
   const LEVEL_FIVE = Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5]));
   // Ten percent faster than the quickest level-5 ride. A temporary turbo can
   // buy breathing room, but expires well before the projectile's 12-second life.
   const TORPEDO_SPEED = Math.ceil(Math.max(...AR.VEHICLES.map(v => AR.getStats(v.id, LEVEL_FIVE).topSpeed)) * 1.1);
+  const BUBBLE_SPEED = 340, CRATE_REFILL = 2;
   const CONTROL_CODES = ['KeyA', 'KeyD', 'KeyW', 'KeyS', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Space'];
   function moveRover(r, x, y, angle = 0, vx = 0, vy = 0) {
     AR.clearRoverGhosting(r);
@@ -57,7 +61,7 @@
     }
     buildUI() {
       const root = document.createElement('div'); root.id = 'versus-root'; root.hidden = true;
-      root.innerHTML = '<section id="versus-setup" class="v-setup"><div class="v-heading"><div><div class="eyebrow">ONE KEYBOARD · TWO RIVALS</div><h2>Friends above.<br><span>Rivals below.</span></h2></div><button id="versus-title" class="button secondary">← Title</button></div><div id="versus-tally" class="v-tally"></div><div class="v-pilots">' + [0, 1].map(i => '<article class="v-pilot p' + (i + 1) + '"><div class="v-card-heading"><b>PLAYER ' + (i + 1) + '</b><span>' + (i ? 'BOTTOM VIEW' : 'TOP VIEW') + '</span></div><div class="v-vehicle-select"><button data-cycle="' + i + ':-1" aria-label="Previous vehicle for Player ' + (i + 1) + '">‹</button><canvas id="versus-vehicle-' + i + '"></canvas><button data-cycle="' + i + ':1" aria-label="Next vehicle for Player ' + (i + 1) + '">›</button></div><h3 id="versus-name-' + i + '"></h3><p id="versus-desc-' + i + '"></p><div class="v-controls">' + (i ? '<kbd>←</kbd> Brake <kbd>→</kbd> Drive <kbd>↑</kbd> Ballast <kbd>↓</kbd> Item' : '<kbd>A</kbd> Brake <kbd>D</kbd> Drive <kbd>W</kbd> Ballast <kbd>S</kbd> Item') + '</div><button id="versus-ready-' + i + '" class="button secondary">' + (i ? '↓' : 'S') + ' · READY</button></article>').join('') + '</div><div class="v-options"><label>ROUND MODE<select id="versus-mode"><option value="race">Race</option><option value="survival">Last Sub Standing</option><option value="pearl">Pearl Rush · 90 seconds</option></select></label><label>RACE DISTANCE<select id="versus-target"><option value="500">500 m</option><option value="1000">1,000 m</option><option value="2000">2,000 m</option></select></label><label>ROUNDS<select id="versus-rounds"><option value="1">One round</option><option value="3" selected>Best of 3</option><option value="5">Best of 5</option></select></label><label>OCEAN<select id="versus-stage">' + AR.STAGES.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('') + '</select></label><label>GRAPHICS<select id="versus-graphics"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label></div><p id="versus-mode-note" class="v-mode-note"></p><div class="v-launch"><p>All 5 rides & 6 oceans unlocked here.<br>Equal level-5 tune. Bragging rights earned.</p><button id="versus-start" class="button primary">DIVE TOGETHER <span>↗</span></button></div><p class="v-setup-help">Choose rides with A / D and ← / →, then S and ↓ to ready up. Both ready starts the match. Esc / P pauses.</p></section><div id="versus-huds" hidden>' + [0, 1].map(i => '<section class="v-hud p' + (i + 1) + '" id="v-hud-' + i + '" aria-label="Player ' + (i + 1) + ' instruments"><div class="v-hud-row"><div class="v-identity"><b>P' + (i + 1) + '</b><strong id="v-distance-' + i + '">0 m</strong><small id="v-progress-' + i + '"></small></div><div class="v-oxygen"><span>O₂ <b id="v-oxygen-' + i + '"></b></span><div><i id="v-oxygen-fill-' + i + '"></i></div><small class="v-lives" id="v-lives-' + i + '" hidden></small></div><div class="v-counts"><b id="v-pearls-' + i + '"></b><span id="v-crashes-' + i + '"></span></div><div class="v-item" id="v-item-' + i + '"><b id="v-icon-' + i + '">?</b><span id="v-item-name-' + i + '">Find a crate</span><kbd>' + (i ? '↓' : 'S') + '</kbd></div></div><div class="v-status" id="v-status-' + i + '"></div><div class="v-toast" id="v-toast-' + i + '" role="status"></div><div class="v-respawn" id="v-respawn-' + i + '"></div><div class="v-bottom"><span>' + (i ? '← BRAKE　→ DRIVE　↑ BALLAST　↓ ITEM' : 'A BRAKE　D DRIVE　W BALLAST　S ITEM') + '</span><span id="v-ballast-' + i + '"></span><span>P / ESC PAUSE</span></div></section>').join('') + '<div class="v-divider"></div><button id="versus-pause" aria-label="Pause versus">Ⅱ</button></div><section id="versus-overlay" class="v-overlay" hidden><div class="v-result" id="versus-overlay-content"></div></section>';
+      root.innerHTML = '<section id="versus-setup" class="v-setup"><div class="v-heading"><div><div class="eyebrow">ONE KEYBOARD · TWO RIVALS</div><h2>Friends above.<br><span>Rivals below.</span></h2></div><button id="versus-title" class="button secondary">← Title</button></div><div id="versus-tally" class="v-tally"></div><div class="v-pilots">' + [0, 1].map(i => '<article class="v-pilot p' + (i + 1) + '"><div class="v-card-heading"><b>PLAYER ' + (i + 1) + '</b><span>' + (i ? 'BOTTOM VIEW' : 'TOP VIEW') + '</span></div><div class="v-vehicle-select"><button data-cycle="' + i + ':-1" aria-label="Previous vehicle for Player ' + (i + 1) + '">‹</button><canvas id="versus-vehicle-' + i + '"></canvas><button data-cycle="' + i + ':1" aria-label="Next vehicle for Player ' + (i + 1) + '">›</button></div><h3 id="versus-name-' + i + '"></h3><p id="versus-desc-' + i + '"></p><div class="v-controls">' + (i ? '<kbd>←</kbd> Brake <kbd>→</kbd> Drive <kbd>↑</kbd> Ballast <kbd>↓</kbd> Item' : '<kbd>A</kbd> Brake <kbd>D</kbd> Drive <kbd>W</kbd> Ballast <kbd>S</kbd> Item') + '</div><button id="versus-ready-' + i + '" class="button secondary">' + (i ? '↓' : 'S') + ' · READY</button></article>').join('') + '</div><div class="v-options"><label>ROUND MODE<select id="versus-mode"><option value="race">Race</option><option value="survival">Last Sub Standing</option><option value="pearl">Pearl Rush · 90 seconds</option><option value="arena">Bubble Battle · 3 hits</option></select></label><label>RACE DISTANCE<select id="versus-target"><option value="500">500 m</option><option value="1000">1,000 m</option><option value="2000">2,000 m</option></select></label><label>ROUNDS<select id="versus-rounds"><option value="1">One round</option><option value="3" selected>Best of 3</option><option value="5">Best of 5</option></select></label><label>OCEAN<select id="versus-stage">' + AR.STAGES.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('') + '</select></label><label>GRAPHICS<select id="versus-graphics"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label></div><p id="versus-mode-note" class="v-mode-note"></p><div class="v-launch"><p>All 5 rides & 6 oceans unlocked here.<br>Equal level-5 tune. Bragging rights earned.</p><button id="versus-start" class="button primary">DIVE TOGETHER <span>↗</span></button></div><p class="v-setup-help">Choose rides with A / D and ← / →, then S and ↓ to ready up. Both ready starts the match. Esc / P pauses.</p></section><div id="versus-huds" hidden>' + [0, 1].map(i => '<section class="v-hud p' + (i + 1) + '" id="v-hud-' + i + '" aria-label="Player ' + (i + 1) + ' instruments"><div class="v-hud-row"><div class="v-identity"><b>P' + (i + 1) + '</b><strong id="v-distance-' + i + '">0 m</strong><small id="v-progress-' + i + '"></small></div><div class="v-oxygen"><span>O₂ <b id="v-oxygen-' + i + '"></b></span><div><i id="v-oxygen-fill-' + i + '"></i></div><small class="v-lives" id="v-lives-' + i + '" hidden></small></div><div class="v-counts"><b id="v-pearls-' + i + '"></b><span id="v-crashes-' + i + '"></span></div><div class="v-item" id="v-item-' + i + '"><b id="v-icon-' + i + '">?</b><span id="v-item-name-' + i + '">Find a crate</span><kbd>' + (i ? '↓' : 'S') + '</kbd></div></div><div class="v-status" id="v-status-' + i + '"></div><div class="v-toast" id="v-toast-' + i + '" role="status"></div><div class="v-respawn" id="v-respawn-' + i + '"></div><div class="v-bottom"><span>' + (i ? '← BRAKE　→ DRIVE　↑ BALLAST　↓ ITEM' : 'A BRAKE　D DRIVE　W BALLAST　S ITEM') + '</span><span id="v-ballast-' + i + '"></span><span>P / ESC PAUSE</span></div></section>').join('') + '<div class="v-divider"></div><button id="versus-pause" aria-label="Pause versus">Ⅱ</button></div><section id="versus-overlay" class="v-overlay" hidden><div class="v-result" id="versus-overlay-content"></div></section>';
       document.body.appendChild(root);
       $('versus-title').onclick = () => this.close();
       root.querySelectorAll('[data-cycle]').forEach(b => { b.onclick = () => { const [i, dir] = b.dataset.cycle.split(':').map(Number); this.cycle(i, dir); }; });
@@ -98,7 +102,7 @@
         $('versus-ready-' + i).classList.toggle('ready', this.ready[i]);
       }
       $('versus-target').disabled = this.config.mode !== 'race';
-      $('versus-mode-note').textContent = { race: 'First to ' + fmt(this.config.target) + ' m wins. Crash, respawn, settle the score.', survival: 'Three O₂ lives each. Black out, respawn in 4 s with 60% air. Last player with a life wins; oxygen drains 1.5× faster and tanks are scarce.', pearl: '90 seconds. Shared pearls: first to grab gets them. Most pearls wins.' }[this.config.mode];
+      $('versus-mode-note').textContent = { race: 'First to ' + fmt(this.config.target) + ' m wins. Crash, respawn, settle the score.', survival: 'Three O₂ lives each. Black out, respawn in 4 s with 60% air. Last player with a life wins; oxygen drains 1.5× faster and tanks are scarce.', pearl: '90 seconds. Shared pearls: first to grab gets them. Most pearls wins.', arena: 'Three hull hits and you’re out! Item fires a slow bubble in your last drive direction. Ballast jumps recharge in 1 s and use no oxygen. Most hull after 120 s wins; ties replay.' }[this.config.mode];
     }
     cycle(i, dir) {
       const n = AR.VEHICLES.findIndex(v => v.id === this.config.vehicles[i]);
@@ -161,21 +165,26 @@
       const c = this.matchConfig;
       this.stage = AR.STAGES.find(s => s.id === c.stage);
       this.terrain = new AR.Terrain(this.stage, this.stage.seed + (this.round - 1) * 137);
+      if (c.mode === 'arena') this.terrain.setArena();
       this.players = c.vehicles.map((id, index) => {
         const base = AR.getStats(id, Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5])));
         if (index) base.color = id === 'bike' ? '#609cf1' : '#56dce9';
         const p = { index, base, effects: {}, distance: 0, maxX: 0, pearls: 0, crashes: 0, blackouts: 0, lives: 3, respawnKind: '', itemsUsed: 0, item: null, charges: 0, respawn: 0, out: false, catchup: false, slipstream: false, catchupWait: 0, catchupCooldown: 0, toast: '', toastTime: 0 };
-        const x = ((index + this.round) % 2) ? 100 : -40;
+        const rightGrid = (index + this.round) % 2;
+        const x = c.mode === 'arena' ? (rightGrid ? 1440 : 360) : rightGrid ? 100 : -40;
+        p.facing = c.mode === 'arena' && rightGrid ? -1 : 1;
         this.spawn(p, x); p.startX = p.maxX = x;
         return p;
       });
-      this.pickups = []; this.projectiles = []; this.projectileSeq = 0; this.explosions = []; this.shake = 0; this.flash = 0; this.generated = new Set(); this.collected = new Set(); this.contacts = 0; this.time = 0; this.remaining = 90;
+      this.pickups = []; this.projectiles = []; this.projectileSeq = 0; this.explosions = []; this.shake = 0; this.flash = 0; this.generated = new Set(); this.collected = new Set(); this.crateCooldowns = new Map(); this.contacts = 0; this.time = 0; this.remaining = c.mode === 'arena' ? 120 : 90;
+      this.hazards = c.mode !== 'arena' && AR.WorldHazards ? new AR.WorldHazards(this.terrain) : null;
       this.cameras = [{}, {}]; this.accumulator = 0; this.clearKeys(); this.phase = 'COUNTDOWN'; this.phaseTime = 4; this.lastCount = null;
       this.generatePickups(); this.show(); this.hud();
       if (this.network) this.network.roundStarted();
     }
     random(n) { const a = Math.sin(n * 127.1 + this.terrain.seed * 311.7) * 43758.5453; return a - Math.floor(a); }
     generatePickups() {
+      if (this.matchConfig.mode === 'arena') { this.pickups = []; return; }
       // Generate around each player, so a large gap never churns the middle terrain.
       const activeSectors = new Set();
       const add = (sector, slot, item) => { const key = sector + ":" + slot; if (!this.collected.has(key)) this.pickups.push({ ...item, key }); };
@@ -212,7 +221,7 @@
       // Larger gaps favour speed and direct ways to open an overtaking window.
       const table = gap >= 60 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'turbo', 'turbo', 'net', 'net'] :
         gap >= 20 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'net', 'net', 'ink', 'magnet'] :
-        gap > 0 ? ['torpedo', 'torpedo', 'ink', 'net', 'siphon', 'riptide', 'turbo', 'magnet', 'shield'] : ['shield', 'shield', 'turbo', 'turbo', 'anchor', 'ink', 'net'];
+        gap > 0 ? ['torpedo', 'torpedo', 'ink', 'net', 'siphon', 'riptide', 'turbo', 'magnet', 'shield', 'gravity', 'jet'] : ['shield', 'shield', 'turbo', 'turbo', 'anchor', 'ink', 'net', 'gravity', 'jet'];
       const id = table[Math.floor(Math.random() * table.length)];
       return id === 'magnet' && this.matchConfig.mode !== 'pearl' ? 'turbo' : id;
     }
@@ -232,14 +241,26 @@
     collect() {
       for (const q of this.pickups) {
         if (q.collected) continue;
-        const candidates = this.players.filter(p => !p.out && !p.respawn && (q.type !== 'crate' || !p.item)).map(p => {
+        const cooldowns = this.crateCooldowns.get(q.key);
+        const candidates = this.players.filter(p => !p.out && !p.respawn && (q.type !== 'crate' || (!p.item && !(cooldowns && cooldowns[p.index] > this.time)))).map(p => {
           const r = p.rover, prev = r.prev;
           return { p, d: segmentDistance(q.x, q.y, prev.x, prev.y, r.x, r.y) };
         }).filter(c => c.d < (q.type === 'crate' ? 53 : 48)).sort((a, b) => a.d - b.d || ((a.p.index + this.round) % 2) - ((b.p.index + this.round) % 2));
         if (!candidates.length) continue;
+        if (q.type === 'crate') {
+          const ready = cooldowns || [0, 0];
+          for (const { p } of candidates) {
+            p.item = this.rollItem(p); p.charges = p.item === 'anchor' ? 2 : 1;
+            ready[p.index] = this.time + CRATE_REFILL;
+            if (this.network) this.network.event('crate', { key: q.key, index: p.index, readyAt: ready[p.index] });
+            this.toast('P' + (p.index + 1) + ' found ' + ITEMS[p.item].name + '!'); this.sound.play('chest');
+          }
+          this.crateCooldowns.set(q.key, ready);
+          while (this.crateCooldowns.size > 128) this.crateCooldowns.delete(this.crateCooldowns.keys().next().value);
+          continue;
+        }
         const p = candidates[0].p; q.collected = true; this.collected.add(q.key);
-        if (q.type === 'crate') { p.item = this.rollItem(p); p.charges = p.item === 'anchor' ? 2 : 1; this.toast('P' + (p.index + 1) + ' found ' + ITEMS[p.item].name + '!'); this.sound.play('chest'); }
-        else if (q.type === 'oxygen') { p.rover.oxygen = Math.min(p.rover.maxOxygen, p.rover.oxygen + p.rover.maxOxygen * .6); this.sound.play('oxygen'); }
+        if (q.type === 'oxygen') { p.rover.oxygen = Math.min(p.rover.maxOxygen, p.rover.oxygen + p.rover.maxOxygen * .6); this.sound.play('oxygen'); }
         else { p.pearls += q.type === 'gold' ? 100 : 5; this.sound.play(q.type === 'gold' ? 'gold' : 'pickup'); }
       }
     }
@@ -260,13 +281,17 @@
     }
     useItem(index) {
       const p = this.players[index], v = this.players[1 - index];
+      if (this.matchConfig && this.matchConfig.mode === 'arena') return this.fireBubble(index);
       if (this.phase !== 'RUNNING' || !p || p.out || p.respawn || !p.item) return false;
       const id = p.item;
+      if (id === 'bubble') return false;
       if (--p.charges <= 0) p.item = null;
       p.itemsUsed++; this.sound.play(id);
       this.toast('P' + (index + 1) + ' used ' + ITEMS[id].name + '!');
       if (id === 'shield') p.effects.shield = 8;
       else if (id === 'turbo') p.effects.turbo = 3;
+      else if (id === 'gravity') { p.effects.gravity = 6; p.rover.setGravityFlipped(true); }
+      else if (id === 'jet') { p.effects.jet = 4; p.rover.jetThrust = 240; }
       else if (id === 'anchor') {
         const x = p.rover.x - (p.rover.vx < -5 ? -1 : 1) * 70;
         this.projectiles.push({ id: ++this.projectileSeq, type: 'anchor', owner: index, x, y: this.terrain.height(x) - 16, life: 15 });
@@ -283,12 +308,50 @@
       }
       this.hud(); return true;
     }
+    fireBubble(index) {
+      const p = this.players[index];
+      if (!this.matchConfig || this.matchConfig.mode !== 'arena' || this.phase !== 'RUNNING' || !p || p.out || p.respawn || p.effects.fireCooldown > 0) return false;
+      const input = this.controls(index);
+      if (input.throttle !== input.brake) p.facing = input.throttle ? 1 : -1;
+      const direction = p.facing || 1;
+      this.projectiles.push({ id: ++this.projectileSeq, type: 'bubble', owner: index, x: p.rover.x + direction * 54, y: p.rover.y - 10, direction, life: 4, passed: false, nearest: Infinity });
+      p.effects.fireCooldown = .8; p.itemsUsed++; this.sound.play('bubble'); this.hud(); return true;
+    }
+    arenaHit(p, reason) {
+      if (p.out || p.respawn) return;
+      AR.clearRoverGhosting(p.rover);
+      p.lives = Math.max(0, p.lives - 1); p.rover.crashed = reason;
+      p.item = null; p.charges = 0; p.effects = { hit: .8 };
+      p.crashReason = reason; p.crashX = p.rover.x; p.respawnKind = 'crash';
+      if (!p.lives) { p.out = true; p.respawn = 0; this.toast('P' + (p.index + 1) + ' is out! Three hull hits.'); }
+      else { p.respawn = 1.2; this.toast('P' + (p.index + 1) + ' took a hull hit! ' + p.lives + ' remaining.'); }
+    }
+    boundArena(r) {
+      const bounds = this.terrain.arena;
+      const bodies = [r, ...r.wheels];
+      const left = Math.min(...bodies.map(b => b.x - (b.radius || 30)));
+      const right = Math.max(...bodies.map(b => b.x + (b.radius || 30)));
+      const dx = left < bounds.left + 12 ? bounds.left + 12 - left : right > bounds.right - 12 ? bounds.right - 12 - right : 0;
+      if (!dx) return;
+      // Translate the whole suspension together, avoiding a wheel snag at the wall.
+      for (const body of bodies) { body.x += dx; if (body.vx * dx < 0) body.vx *= -.2; }
+      r.omega *= .7; r.sleeping = false;
+    }
     updateProjectiles(dt) {
       for (const q of this.projectiles) {
         q.life -= dt;
         const p = this.players[q.owner], v = this.players[1 - q.owner], r = v.rover;
         const oldX = q.x, oldY = q.y;
-        if (q.type === 'torpedo') {
+        if (q.type === 'bubble') {
+          q.x += q.direction * BUBBLE_SPEED * dt;
+          if (q.x < this.terrain.arena.left || q.x > this.terrain.arena.right || q.y + 10 >= this.terrain.height(q.x) || q.y - 10 <= this.terrain.ceiling(q.x)) q.life = 0;
+          const gap = (r.x - q.x) * q.direction;
+          q.nearest = Math.min(q.nearest, Math.abs(gap));
+          if (!q.passed && gap < -65) {
+            q.passed = true;
+            if (!v.out && !v.respawn && q.nearest < 100) { this.totals[v.index].torpedoesDodged++; v.effects.dodged = 1.3; }
+          }
+        } else if (q.type === 'torpedo') {
           q.x += q.direction * TORPEDO_SPEED * dt;
           const groundY = this.terrain.height(q.x) - 28;
           // Follow the seabed; homing has a 12px vertical reach, leaving room to jump.
@@ -311,7 +374,12 @@
         if (hit) {
           q.life = 0;
           if (!this.blocked(v, p, q.type)) {
-            if (q.type === 'torpedo') {
+            if (q.type === 'bubble') {
+              this.arenaHit(v, 'Bubble hit');
+              this.explosions.push({ x: q.x, y: q.y, life: .45, maxLife: .45 });
+              if (this.network) this.network.event('explosion', { x: q.x, y: q.y });
+              this.shake = .3; this.sound.play('bubbleHit');
+            } else if (q.type === 'torpedo') {
               r.crashed = 'Torpedoed!'; this.crash(v); v.effects.torpedo = 1;
               this.explosions.push({ x: q.x, y: q.y, life: .8, maxLife: .8 });
               if (this.network) this.network.event('explosion', { x: q.x, y: q.y });
@@ -325,6 +393,7 @@
     }
     crash(p) {
       if (p.respawn || p.out) return;
+      if (this.matchConfig.mode === 'arena') { p.crashes++; this.arenaHit(p, p.rover.crashed || 'Hull impact'); this.sound.play('crash'); return; }
       AR.clearRoverGhosting(p.rover);
       p.crashes++; p.respawn = 2.5; p.respawnKind = 'crash'; p.crashX = p.rover.x; p.crashReason = p.rover.crashed || 'Hull crushed';
       p.item = null; p.charges = 0; p.effects = {};
@@ -343,11 +412,14 @@
     step(dt) {
       if (this.phase !== 'RUNNING') return;
       if (this.network) this.network.consumeEdges();
-      this.time += dt; this.remaining = Math.max(0, 90 - this.time);
+      this.time += dt; this.remaining = Math.max(0, (this.matchConfig.mode === 'arena' ? 120 : 90) - this.time);
+      // Expired refills need no history; reversing still respects active cooldowns.
+      for (const [key, ready] of this.crateCooldowns) if (ready.every(t => t <= this.time)) this.crateCooldowns.delete(key);
       this.shake = Math.max(0, this.shake - dt * 2.8); this.flash = Math.max(0, this.flash - dt);
       for (const e of this.explosions) e.life -= dt;
       this.explosions = this.explosions.filter(e => e.life > 0);
       const c = this.matchConfig;
+      const arena = c.mode === 'arena';
       const beforeDistances = this.players.map(p => p.distance);
       // Snapshot shared positions before either physics step, so both boosts use
       // the same instant rather than depending on player update order.
@@ -358,37 +430,51 @@
         p.toastTime = Math.max(0, p.toastTime - dt);
         for (const key of Object.keys(p.effects)) p.effects[key] = Math.max(0, p.effects[key] - dt);
         if (p.out) { p.rover.savePrevious(); continue; }
+        if (arena) p.rover.oxygen = p.rover.maxOxygen;
         if (p.rover.oxygen <= 0 && !p.respawn) { this.blackout(p); p.rover.savePrevious(); continue; }
         if (p.respawn > 0) {
           p.respawn = Math.max(0, p.respawn - dt); p.rover.savePrevious();
           if (p.respawn <= 1e-8) {
             const blackout = p.respawnKind === 'blackout';
-            const oxygen = blackout ? p.rover.maxOxygen * .6 : Math.max(0, p.rover.oxygen - p.rover.maxOxygen * .15);
-            this.spawn(p, p.crashX); p.rover.oxygen = oxygen; p.respawn = 0; p.respawnKind = ''; p.effects.spawnShield = 1.5;
+            const oxygen = arena ? p.rover.maxOxygen : blackout ? p.rover.maxOxygen * .6 : Math.max(0, p.rover.oxygen - p.rover.maxOxygen * .15);
+            const opponent = this.players[1 - p.index];
+            const spawnX = arena ? (opponent.rover.x > 900 ? 360 : 1440) : p.crashX;
+            this.spawn(p, spawnX); p.rover.oxygen = oxygen; p.respawn = 0; p.respawnKind = ''; p.effects.spawnShield = 1.5;
+            if (arena) p.facing = spawnX < opponent.rover.x ? 1 : -1;
             if (!oxygen) this.blackout(p);
           }
           continue;
         }
         const gap = progress[1 - p.index] - progress[p.index];
-        const current = clamp((gap - 20) / 40, 0, 1);
+        const current = arena ? 0 : clamp((gap - 20) / 40, 0, 1);
         p.catchup = current > 0;
         const behind = positions[1 - p.index].x - positions[p.index].x;
-        p.slipstream = ground[p.index] && ground[1 - p.index] && behind >= 80 && behind <= 400 &&
+        p.slipstream = !arena && ground[p.index] && ground[1 - p.index] && behind >= 80 && behind <= 400 &&
           Math.abs(positions[p.index].y - positions[1 - p.index].y) < 55 && !this.players[1 - p.index].respawn && !this.players[1 - p.index].out;
         const r = p.rover, effect = p.effects, input = this.controls(p.index);
+        if (input.throttle !== input.brake) p.facing = input.throttle ? 1 : -1;
+        r.setGravityFlipped(effect.gravity > 0);
+        r.jetThrust = effect.jet > 0 ? 240 : 0;
         r.stats.torque = p.base.torque * (effect.turbo > 0 ? 1.6 : 1) * (effect.net > 0 ? .35 : 1) * (1 + .15 * current);
         r.stats.topSpeed = p.base.topSpeed * (effect.turbo > 0 ? 1.4 : 1) * (1 + .25 * current) * (p.slipstream ? 1.1 : 1);
         r.stats.thrustLevel = effect.net > 0 ? 0 : p.base.thrustLevel;
         if (effect.net > 0) { const drag = Math.exp(-dt * 2.4); r.vx *= drag; r.wheels.forEach(w => { w.vx *= drag; w.omega *= drag; }); }
+        if (arena) {
+          if (input.burst && !(effect.jumpCooldown > 0) && AR.roverNearGround(r)) { kick(r, 0, -270); effect.jumpCooldown = 1; this.sound.play('burst'); }
+          input.burst = false;
+        }
         r.step(input, dt);
+        if (arena) { r.oxygen = r.maxOxygen; r.cooldown = effect.jumpCooldown || 0; this.boundArena(r); }
         this.pendingBurst[p.index] = false;
         if (c.mode === 'survival') r.oxygen = Math.max(0, r.oxygen - dt * (input.throttle ? 1.02 : .85) * .5);
         if (r.burstFired) this.sound.play('burst');
       }
+      if (this.hazards) this.hazards.step(this.players.filter(p => !p.out && !p.respawn).map(p => p.rover), dt);
       if (this.players.every(p => !p.out && !p.respawn && !(p.effects.spawnShield > 0))) {
         const result = AR.resolveRoverContacts(this.players[0].rover, this.players[1].rover);
         this.contacts += result.contacts;
       }
+      if (arena) for (const p of this.players) if (!p.out && !p.respawn) this.boundArena(p.rover);
       // Distance includes the final shared-contact position, including a landing shove across the line.
       for (const p of this.players) if (!p.respawn && !p.out) { p.maxX = Math.max(p.maxX, p.rover.x); p.distance = Math.max(0, (p.maxX - p.startX) / 10); }
       this.collect(); this.updateProjectiles(dt);
@@ -410,7 +496,10 @@
       }
       if (c.mode === 'survival' && alive.length < 2) { this.endRound(alive.length ? alive[0].index : this.compare('distance'), alive.length ? 'Last Sub Standing' : 'Both final lives lost · furthest wins'); return; }
       if (c.mode === 'pearl' && this.remaining <= 0) { this.endRound(this.compare('pearls'), 'Pearl Rush complete'); return; }
-      this.updateCatchupItems(dt);
+      if (arena) {
+        if (alive.length < 2) { this.endRound(alive.length ? alive[0].index : -1, 'Bubble Battle · three hits out'); return; }
+        if (this.remaining <= 0) { this.endRound(this.compare('lives'), 'Bubble Battle · time up, most hull wins'); return; }
+      } else this.updateCatchupItems(dt);
     }
     compare(key) { const delta = this.players[0][key] - this.players[1][key]; return Math.abs(delta) < .001 ? -1 : delta > 0 ? 0 : 1; }
     endRound(winner, reason) {
@@ -432,7 +521,7 @@
       const title = winner < 0 ? 'A DEAD HEAT!' : 'PLAYER ' + (winner + 1) + (match ? ' WINS' : ' TAKES THE ROUND');
       const cards = [0, 1].map(i => {
         const p = this.players[i], t = this.totals[i];
-        const stats = match ? [['BEST DISTANCE', fmt(t.bestDistance) + ' m'], ['ITEMS LANDED', t.itemsLanded], ['CRASHES', t.crashes], ['BLACKOUTS', t.blackouts], ['TORPEDOES DODGED', t.torpedoesDodged]] : [['DISTANCE', fmt(p.distance) + ' m'], ['CRASHES', p.crashes], ['BLACKOUTS', p.blackouts], ['ITEMS USED', p.itemsUsed], ['PEARLS', p.pearls]];
+        const stats = this.matchConfig.mode === 'arena' ? (match ? [['HITS LANDED', t.itemsLanded], ['SHOTS FIRED', t.itemsUsed], ['BUBBLES DODGED', t.torpedoesDodged], ['HULL CRASHES', t.crashes]] : [['HULL LEFT', p.lives + ' / 3'], ['SHOTS FIRED', p.itemsUsed], ['HULL CRASHES', p.crashes]]) : match ? [['BEST DISTANCE', fmt(t.bestDistance) + ' m'], ['ITEMS LANDED', t.itemsLanded], ['CRASHES', t.crashes], ['BLACKOUTS', t.blackouts], ['TORPEDOES DODGED', t.torpedoesDodged]] : [['DISTANCE', fmt(p.distance) + ' m'], ['CRASHES', p.crashes], ['BLACKOUTS', p.blackouts], ['ITEMS USED', p.itemsUsed], ['PEARLS', p.pearls]];
         return '<div class="v-result-pilot p' + (i + 1) + '"><b>PLAYER ' + (i + 1) + '</b><dl>' + stats.map(([k, v]) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>').join('') + '</dl></div>';
       }).join('');
       $('versus-overlay-content').innerHTML = '<div class="eyebrow">' + (match ? 'THE OCEAN HAS A CHAMPION' : 'ROUND ' + this.round + ' COMPLETE') + '</div><h2 class="' + (winner === 1 ? 'teal' : '') + '">' + title + '</h2><p>' + (match ? MODES[this.matchConfig.mode] + ' · ' + this.stage.name : this.roundReason) + '</p><div class="v-score"><span>P1</span> ' + this.scores[0] + ' <small>—</small> ' + this.scores[1] + ' <span>P2</span></div><div class="v-result-stats">' + cards + '</div>' + (match ? '<div class="v-result-actions"><button id="versus-rematch" class="button primary">REMATCH <span>R ↻</span></button><button id="versus-change" class="button secondary">Change setup</button><button id="versus-result-title" class="text-button">Title</button></div><small>Rivalry saved on this device.' + (!this.save.storageAvailable ? ' Storage unavailable — session only.' : '') + '</small>' : '<div class="v-next" id="versus-next">Next dive in 3…</div>');
@@ -474,21 +563,22 @@
       if (!this.players.length) return;
       for (const p of this.players) {
         const i = p.index, r = p.rover, e = p.effects;
-        writeText($('v-distance-' + i), fmt(p.distance) + ' m');
-        writeText($('v-progress-' + i), this.matchConfig.mode === 'pearl' ? Math.ceil(this.remaining) + ' s · ROUND ' + this.round : (this.matchConfig.mode === 'race' ? '/ ' + fmt(this.matchConfig.target) + ' m · ' : '') + 'ROUND ' + this.round + ' · ' + this.scores.join('–'));
+        const arena = this.matchConfig.mode === 'arena';
+        writeText($('v-distance-' + i), arena ? 'BATTLE' : fmt(p.distance) + ' m');
+        writeText($('v-progress-' + i), ['pearl', 'arena'].includes(this.matchConfig.mode) ? Math.ceil(this.remaining) + ' s · ROUND ' + this.round : (this.matchConfig.mode === 'race' ? '/ ' + fmt(this.matchConfig.target) + ' m · ' : '') + 'ROUND ' + this.round + ' · ' + this.scores.join('–'));
         writeText($('v-oxygen-' + i), Math.ceil(100 * r.oxygen / r.maxOxygen) + '%');
         $('v-oxygen-fill-' + i).style.width = clamp(100 * r.oxygen / r.maxOxygen, 0, 100) + '%';
         $('v-oxygen-fill-' + i).classList.toggle('low', r.oxygen / r.maxOxygen < .25);
-        writeText($('v-pearls-' + i), '● ' + fmt(p.pearls)); writeText($('v-crashes-' + i), p.crashes + (p.crashes === 1 ? ' crash' : ' crashes'));
-        writeText($('v-icon-' + i), p.item ? ITEMS[p.item].icon : '?');
-        writeText($('v-item-name-' + i), p.item ? ITEMS[p.item].name + (p.charges > 1 ? ' ×' + p.charges : '') : 'Find a crate');
-        $('v-item-' + i).dataset.item = p.item || '';
-        writeText($('v-status-' + i), [e.riptide > 0 ? 'RIPTIDE! controls reversed ' + Math.ceil(e.riptide) + 's' : '', e.net > 0 ? 'TANGLED! ' + Math.ceil(e.net) + 's' : '', e.ink > 0 ? 'INKED! ' + Math.ceil(e.ink) + 's' : '', e.turbo > 0 ? '» TURBO ' + Math.ceil(e.turbo) + 's' : '', e.spawnShield > 0 ? '◉ RESPAWN SHIELD' : e.shield > 0 ? '◉ SHIELD ' + Math.ceil(e.shield) + 's' : '', p.catchup ? '↑ CATCH-UP CURRENT' : '', p.slipstream ? '» SLIPSTREAM' : '', e.siphon > 0 ? '− OXYGEN SIPHONED!' : '', e.magnet > 0 ? 'PEARLS STOLEN!' : '', e.dodged > 0 ? 'TORPEDO DODGED!' : '', e.blocked > 0 ? 'ATTACK BLOCKED!' : ''].filter(Boolean).join(' · '));
+        writeText($('v-pearls-' + i), arena ? p.lives + ' / 3 HULL' : '● ' + fmt(p.pearls)); writeText($('v-crashes-' + i), arena ? p.itemsUsed + ' shots' : p.crashes + (p.crashes === 1 ? ' crash' : ' crashes'));
+        writeText($('v-icon-' + i), arena ? ITEMS.bubble.icon : p.item ? ITEMS[p.item].icon : '?');
+        writeText($('v-item-name-' + i), arena ? e.fireCooldown > 0 ? 'Reload ' + e.fireCooldown.toFixed(1) + 's' : 'Fire bubble' : p.item ? ITEMS[p.item].name + (p.charges > 1 ? ' ×' + p.charges : '') : 'Find a crate');
+        $('v-item-' + i).dataset.item = arena ? 'bubble' : p.item || '';
+        writeText($('v-status-' + i), [e.riptide > 0 ? 'RIPTIDE! controls reversed ' + Math.ceil(e.riptide) + 's' : '', e.net > 0 ? 'TANGLED! ' + Math.ceil(e.net) + 's' : '', e.ink > 0 ? 'INKED! ' + Math.ceil(e.ink) + 's' : '', e.turbo > 0 ? '» TURBO ' + Math.ceil(e.turbo) + 's' : '', e.gravity > 0 ? '⇅ GRAVITY FLIP ' + Math.ceil(e.gravity) + 's' : '', e.jet > 0 ? '♨ JET DRIVE ' + Math.ceil(e.jet) + 's' : '', e.spawnShield > 0 ? '◉ RESPAWN SHIELD' : e.shield > 0 ? '◉ SHIELD ' + Math.ceil(e.shield) + 's' : '', p.catchup ? '↑ CATCH-UP CURRENT' : '', p.slipstream ? '» SLIPSTREAM' : '', e.siphon > 0 ? '− OXYGEN SIPHONED!' : '', e.magnet > 0 ? 'PEARLS STOLEN!' : '', e.dodged > 0 ? (arena ? 'BUBBLE DODGED!' : 'TORPEDO DODGED!') : '', e.blocked > 0 ? 'ATTACK BLOCKED!' : ''].filter(Boolean).join(' · '));
         writeText($('v-toast-' + i), p.toastTime > 0 ? p.toast : '');
         writeText($('v-respawn-' + i), p.respawn > 0 ? p.crashReason.toUpperCase() + ' · RESPAWN ' + p.respawn.toFixed(1) + ' s' : p.out ? 'OUT OF LIVES' : '');
-        const lives = $('v-lives-' + i); lives.hidden = this.matchConfig.mode !== 'survival';
-        lives.setAttribute('aria-label', p.lives + ' oxygen lives remaining');
-        const tanks = [0, 1, 2].map(n => '<i class="v-tank' + (n >= p.lives ? ' empty' : '') + '" aria-hidden="true">O₂</i>').join('');
+        const lives = $('v-lives-' + i); lives.hidden = !arena && this.matchConfig.mode !== 'survival';
+        lives.setAttribute('aria-label', p.lives + (arena ? ' hull hits remaining' : ' oxygen lives remaining'));
+        const tanks = [0, 1, 2].map(n => '<i class="v-tank' + (n >= p.lives ? ' empty' : '') + '" aria-hidden="true">' + (arena ? '◆' : 'O₂') + '</i>').join('');
         if (lives.innerHTML !== tanks) lives.innerHTML = tanks;
         writeText($('v-ballast-' + i), 'BALLAST ' + (r.cooldown > 0 ? r.cooldown.toFixed(1) + 's' : r.oxygen <= 8 ? 'LOW O₂' : 'READY'));
       }
@@ -499,12 +589,12 @@
       const h = this.renderer.height, w = this.renderer.width;
       for (const p of this.players) {
         const camera = this.cameras[p.index]; camera.dt = this.phase === 'PAUSED' ? 0 : dt; camera.alpha = this.phase === 'RUNNING' ? clamp(this.accumulator / AR.FIXED_DT, 0, 1) : 1;
-        const scene = { state: 'RUNNING', terrain: this.terrain, stage: this.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: this.players, pickups: this.pickups, projectiles: this.projectiles, explosions: this.explosions, shake: this.shake, flash: this.flash, time: this.time, headlight: p.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: this.matchConfig.mode === 'race' ? p.startX + this.matchConfig.target * 10 : null };
+        const scene = { state: 'RUNNING', mode: this.matchConfig.mode, crateCooldowns: this.crateCooldowns, sharks: this.hazards ? this.hazards.sharks : [], terrain: this.terrain, stage: this.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: this.players, pickups: this.pickups, projectiles: this.projectiles, explosions: this.explosions, shake: this.shake, flash: this.flash, time: this.time, headlight: p.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: this.matchConfig.mode === 'race' ? p.startX + this.matchConfig.target * 10 : null };
         this.renderer.render(scene, camera, { x: 0, y: p.index * (h / 2) + (p.index ? 1 : 0), width: w, height: h / 2 - 1 });
       }
     }
     inspect() {
-      return { state: 'VERSUS_' + this.phase, players: this.players.map(p => ({ ...p.rover.snapshot(), index: p.index, vehicle: p.base.id, maxOxygen: p.rover.maxOxygen, item: p.item, charges: p.charges, crashes: p.crashes, blackouts: p.blackouts, lives: p.lives, respawnKind: p.respawnKind, ghosting: Boolean(p.rover.ghosting), distance: p.distance, pearls: p.pearls, effects: { ...p.effects }, respawn: p.respawn, out: p.out, catchup: p.catchup, slipstream: p.slipstream, startX: p.startX, itemsUsed: p.itemsUsed, torque: p.rover.stats.torque, topSpeed: p.rover.stats.topSpeed })), versus: { phase: this.phase, round: this.round || 0, scores: [...this.scores], mode: (this.matchConfig || this.config).mode, target: (this.matchConfig || this.config).target, remaining: this.remaining, contacts: this.contacts || 0, time: this.time || 0, tally: { ...this.save.data.versus }, totals: this.totals ? this.totals.map(t => ({ ...t })) : [], projectiles: this.projectiles ? this.projectiles.map(q => ({ ...q })) : [], torpedoSpeed: TORPEDO_SPEED, explosions: this.explosions ? this.explosions.map(e => ({ ...e })) : [], shake: this.shake || 0, flash: this.flash || 0, fps: this.frameSeconds ? this.frames / this.frameSeconds : 0 } };
+      return { state: 'VERSUS_' + this.phase, players: this.players.map(p => ({ ...p.rover.snapshot(), index: p.index, facing: p.facing, vehicle: p.base.id, maxOxygen: p.rover.maxOxygen, item: p.item, charges: p.charges, crashes: p.crashes, blackouts: p.blackouts, lives: p.lives, respawnKind: p.respawnKind, ghosting: Boolean(p.rover.ghosting), distance: p.distance, pearls: p.pearls, effects: { ...p.effects }, respawn: p.respawn, out: p.out, catchup: p.catchup, slipstream: p.slipstream, startX: p.startX, itemsUsed: p.itemsUsed, torque: p.rover.stats.torque, topSpeed: p.rover.stats.topSpeed })), versus: { phase: this.phase, round: this.round || 0, scores: [...this.scores], mode: (this.matchConfig || this.config).mode, target: (this.matchConfig || this.config).target, remaining: this.remaining, contacts: this.contacts || 0, time: this.time || 0, tally: { ...this.save.data.versus }, totals: this.totals ? this.totals.map(t => ({ ...t })) : [], projectiles: this.projectiles ? this.projectiles.map(q => ({ ...q })) : [], torpedoSpeed: TORPEDO_SPEED, bubbleSpeed: BUBBLE_SPEED, arena: this.terrain && this.terrain.arena ? { ...this.terrain.arena } : null, crateCooldowns: this.crateCooldowns ? [...this.crateCooldowns].map(([key, ready]) => [key, [...ready]]) : [], sharks: this.hazards ? this.hazards.sharks.map(q => ({ ...q })) : [], explosions: this.explosions ? this.explosions.map(e => ({ ...e })) : [], shake: this.shake || 0, flash: this.flash || 0, fps: this.frameSeconds ? this.frames / this.frameSeconds : 0 } };
     }
     debug() {
       return {
@@ -512,6 +602,7 @@
         placePlayer: (i, values) => {
           const p = this.players[i]; if (!p || !values || typeof values !== 'object') return false;
           const r = p.rover, x = Number.isFinite(values.x) ? values.x : r.x;
+          r.setGravityFlipped(false); r.jetThrust = 0;
           const y = Number.isFinite(values.y) ? values.y : this.terrain.height(x) - r.stats.radius - r.stats.restLength - 9;
           moveRover(r, x, y, Number.isFinite(values.angle) ? values.angle : 0, Number.isFinite(values.vx) ? values.vx : 0, Number.isFinite(values.vy) ? values.vy : 0);
           if (Number.isFinite(values.oxygen)) r.oxygen = clamp(values.oxygen, 0, r.maxOxygen);

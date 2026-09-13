@@ -157,6 +157,14 @@
         case 'shield':
           [520, 780, 1040].forEach((frequency, index) => this.tone(frequency, 0.32, 0.08, 'sine', index * 0.055));
           break;
+        case 'gravity':
+          this.tone(700, .42, .10, 'sine', 0, 150);
+          this.tone(220, .36, .08, 'triangle', .08, 520);
+          break;
+        case 'jet':
+          this.tone(100, .36, .055, 'sawtooth', 0, 460);
+          this.tone(340, .24, .07, 'sine', .10, 780);
+          break;
         case 'turbo':
           this.noise(0.26, 0.14, 1400);
           this.tone(90, 0.5, 0.13, 'triangle', 0, 900);

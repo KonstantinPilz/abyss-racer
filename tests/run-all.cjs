@@ -3,7 +3,7 @@
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
-const suites = ['docs/selftest.js', 'tests/progression.test.js', 'tests/contacts.test.cjs', 'tests/versus-save-audio.test.cjs', 'tests/versus-logic.test.cjs', 'tests/online.test.cjs', 'tests/browser.test.cjs', 'tests/edge.test.cjs', 'tests/versus.test.cjs', 'tests/graphics.test.cjs', 'tests/suggestions.test.cjs', 'tests/online-browser.test.cjs', 'tests/render-benchmark.cjs'];
+const suites = ['docs/selftest.js', 'tests/progression.test.js', ...fs.readdirSync(__dirname).filter(name => name.endsWith('.test.cjs')).sort().map(name => 'tests/' + name), 'tests/render-benchmark.cjs'];
 const results = [];
 for (const suite of suites) {
  const start = Date.now();

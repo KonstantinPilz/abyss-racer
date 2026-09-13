@@ -174,7 +174,9 @@
       this.ground(c, terrain, p, left, right, bottom, id);
       if (id === 'ice') this.iceCeiling(c, terrain, left, right, this.bounds.top);
       if (Number.isFinite(scene.targetX) && scene.targetX >= left && scene.targetX <= right) this.finishMarker(c, scene.targetX, terrain.height(scene.targetX));
-      this.pickups(c, scene.pickups || []);
+      this.worldRoutes(c, terrain, scene, left, right);
+      this.pickups(c, (scene.pickups || []).filter(q => q.type !== 'crate' || !(scene.crateCooldowns?.get(q.key)?.[scene.player?.index || 0] > scene.time)));
+      this.sharks(c, scene.sharks || []);
       this.particles(c, scene.particles || [], false);
       this.projectiles(c, scene.projectiles || [], alpha);
       if (versus) {
@@ -188,7 +190,7 @@
           c.save(); if (player.out || player.respawn > 0 || player.respawnTimer > 0) c.globalAlpha = .32;
           else if (overlap && player === rear) c.globalAlpha = .55;
           this.drawVehicle(c, player.rover, alpha, scene.headlight); c.restore();
-          this.playerEffects(c, player, alpha);
+          this.playerEffects(c, player, alpha, scene.mode);
         }
       } else this.drawVehicle(c, rover, alpha, scene.headlight);
       this.decorations(c, terrain, id, left, right, true);
@@ -539,6 +541,81 @@
       c.restore();
     }
 
+    worldRoutes(c, terrain, scene, left, right) {
+      for (const deck of terrain.platformsBetween?.(left, right) || []) {
+        const start = Math.max(left, deck.start), end = Math.min(right, deck.end);
+        c.save(); c.lineJoin = 'round';
+        c.beginPath();
+        for (let x = start; x < end; x += 10) x === start ? c.moveTo(x, terrain.platformHeight(x, deck)) : c.lineTo(x, terrain.platformHeight(x, deck));
+        c.lineTo(end, terrain.platformHeight(end, deck));
+        c.strokeStyle = deck.type === 'deck' ? '#42544f' : '#315e48'; c.lineWidth = 17; c.stroke();
+        c.strokeStyle = deck.type === 'deck' ? '#e1b782' : '#b5dda0'; c.lineWidth = 4; c.stroke();
+        for (let x = Math.ceil(start / 50) * 50; x < end; x += 50) {
+          const y = terrain.platformHeight(x, deck);
+          c.strokeStyle = deck.type === 'deck' ? '#826f54' : '#6e9a67'; c.lineWidth = 3;
+          c.beginPath(); c.moveTo(x, y + 3); c.lineTo(x + 8, y + 13); c.stroke();
+        }
+        if (deck.start >= left) {
+          c.fillStyle = '#d8efc9'; c.font = 'bold 11px system-ui'; c.fillText('↑ UPPER ROUTE', deck.start + 15, terrain.platformHeight(deck.start, deck) - 17);
+        }
+        c.restore();
+      }
+      for (const spring of terrain.hotSpringsBetween?.(left, right) || []) {
+        c.save();
+        const g = c.createLinearGradient(0, spring.y - 230, 0, spring.y);
+        g.addColorStop(0, 'rgba(144,247,187,0)'); g.addColorStop(1, 'rgba(144,247,187,.19)');
+        c.fillStyle = g; c.fillRect(spring.x - spring.width, spring.y - 230, spring.width * 2, 230);
+        ellipse(c, spring.x, spring.y - 3, 33, 8, '#6fb99a');
+        c.strokeStyle = '#bbffe1'; c.lineWidth = 1.5;
+        for (let j = 0; j < (this.graphics === 'performance' ? 9 : 18); j++) {
+          const rise = (this.time * 65 + j * 19) % 215;
+          const x = spring.x + Math.sin(j * 2.7 + rise * .02) * (25 + rise * .19);
+          c.globalAlpha = (1 - rise / 215) * .8; ellipse(c, x, spring.y - rise - 8, 3 + j % 4, 3 + j % 4); c.stroke();
+        }
+        c.globalAlpha = .85; c.fillStyle = '#d5ffe7'; c.font = 'bold 11px system-ui'; c.textAlign = 'center'; c.fillText('↑ HOT SPRING', spring.x, spring.y - 40); c.restore();
+      }
+      if (scene.players?.some(p => p.effects.gravity > 0) && terrain.stage.id !== 'ice' && !terrain.arena) {
+        c.save(); c.strokeStyle = '#d2adff'; c.lineWidth = 5; c.globalAlpha = .75;
+        c.beginPath(); for (let x = left; x <= right + 10; x += 10) x === left ? c.moveTo(x, terrain.gravityCeiling(x)) : c.lineTo(x, terrain.gravityCeiling(x)); c.stroke();
+        c.strokeStyle = '#f2ddff'; c.lineWidth = 1; c.setLineDash([14, 14]); c.stroke(); c.restore();
+      }
+      if (terrain.arena) {
+        c.save(); c.strokeStyle = '#a7f5df'; c.lineWidth = 6;
+        for (const x of [terrain.arena.left, terrain.arena.right]) {
+          c.beginPath(); c.moveTo(x, terrain.arena.ceiling); c.lineTo(x, terrain.height(x)); c.stroke();
+          for (let y = terrain.arena.ceiling + 20; y < terrain.height(x); y += 36) {
+            c.fillStyle = '#497c7b'; c.fillRect(x - 12, y, 24, 10);
+          }
+        }
+        c.setLineDash([12, 12]); c.lineWidth = 2; c.globalAlpha = .6;
+        c.beginPath(); c.moveTo(terrain.arena.left, terrain.arena.ceiling); c.lineTo(terrain.arena.right, terrain.arena.ceiling); c.stroke(); c.restore();
+      }
+    }
+
+    sharks(c, sharks) {
+      for (const shark of sharks) {
+        if (!this.inView(shark.x, shark.y, 220)) continue;
+        const warning = shark.phase === 'warning', lunge = shark.phase === 'lunge';
+        c.save(); c.translate(shark.x, shark.y);
+        if (warning) {
+          c.strokeStyle = '#ffbd87'; c.lineWidth = 2; c.globalAlpha = .6 + Math.sin(this.time * 15) * .25;
+          c.setLineDash([6, 7]); c.beginPath(); c.moveTo(0, 0); c.lineTo(shark.direction * 185, 0); c.stroke(); c.setLineDash([]);
+          c.fillStyle = '#ffe5b2'; c.font = 'bold 14px system-ui'; c.textAlign = 'center'; c.fillText('! SHARK · JUMP', 0, -54); c.globalAlpha = 1;
+        }
+        c.scale(shark.direction || 1, 1);
+        c.fillStyle = lunge ? '#7398a6' : '#507b89';
+        c.beginPath(); c.moveTo(-36, 0); c.lineTo(-62, -24); c.lineTo(-54, 0); c.lineTo(-62, 24); c.closePath(); c.fill();
+        c.beginPath(); c.moveTo(-8, -12); c.lineTo(1, -40); c.lineTo(20, -9); c.closePath(); c.fill();
+        ellipse(c, 0, 0, 43, 17, c.fillStyle);
+        ellipse(c, 10, 6, 30, 8, '#abc4c6');
+        c.fillStyle = '#56828d'; c.beginPath(); c.moveTo(-3, 8); c.lineTo(12, 29); c.lineTo(23, 10); c.fill();
+        ellipse(c, 28, -6, 3, 3, warning || lunge ? '#ffd28c' : '#e0f5ed'); ellipse(c, 29, -6, 1.5, 1.5, '#122733');
+        c.strokeStyle = '#244956'; c.lineWidth = 2;
+        for (let j = 0; j < 3; j++) { c.beginPath(); c.moveTo(14 - j * 5, -5); c.lineTo(12 - j * 5, 5); c.stroke(); }
+        c.beginPath(); c.moveTo(30, 6); c.lineTo(42, 2); c.stroke(); c.restore();
+      }
+    }
+
     iceCeiling(c, terrain, left, right, top) {
       if (!Number.isFinite(terrain.ceiling((left + right) / 2))) return;
       c.beginPath(); c.moveTo(left, top);
@@ -623,7 +700,14 @@
         const x = mix(old.x, projectile.x, alpha), y = mix(old.y, projectile.y, alpha);
         const color = projectile.owner === 1 ? '#7ff8f1' : '#ffd292';
         c.save(); c.translate(x, y);
-        if (projectile.type === 'anchor') {
+        if (projectile.type === 'bubble') {
+          glow(c, 0, 0, 25, color, .18);
+          ellipse(c, 0, 0, 10, 10, 'rgba(130,239,245,.25)');
+          c.strokeStyle = color; c.lineWidth = 2; c.stroke();
+          ellipse(c, -3, -4, 3, 2, '#f3ffff');
+          c.strokeStyle = color; c.lineWidth = 1; c.globalAlpha = .45;
+          for (let j = 1; j < 4; j++) { ellipse(c, -j * 12 * (projectile.direction || Math.cos(projectile.angle || 0)), 0, 4 - j * .7, 4 - j * .7); c.stroke(); }
+        } else if (projectile.type === 'anchor') {
           glow(c, 0, -12, 30, '#ffaf87', .15);
           c.strokeStyle = '#142c36'; c.lineWidth = 9; c.lineCap = 'round';
           const shape = () => {
@@ -658,10 +742,33 @@
       }
     }
 
-    playerEffects(c, player, alpha) {
+    playerEffects(c, player, alpha, mode) {
       const effects = player.effects || {}, rover = player.rover, old = rover.prev || rover;
       const x = mix(old.x, rover.x, alpha), y = mix(old.y, rover.y, alpha);
       c.save(); c.translate(x, y);
+      if (mode === 'arena') {
+        const facing = player.facing || 1;
+        c.save(); c.scale(facing, 1);
+        c.fillStyle = '#12303b'; roundRect(c, 3, -30, 39, 15, 5); c.fill();
+        c.strokeStyle = player.index ? '#83f4ed' : '#ffd292'; c.lineWidth = 2; c.stroke();
+        ellipse(c, 12, -19, 10, 9, '#547c85');
+        ellipse(c, 39, -23, 4, 7, effects.fireCooldown > .5 ? '#edffff' : '#80c6cd');
+        c.restore();
+      }
+      if (effects.gravity > 0) {
+        c.strokeStyle = '#d5b0ff'; c.lineWidth = 2; c.setLineDash([8, 5]);
+        ellipse(c, 0, 0, 66, 51); c.stroke(); c.setLineDash([]);
+        c.fillStyle = '#eddfff'; c.font = 'bold 20px system-ui'; c.textAlign = 'center'; c.fillText('⇅', 0, 73);
+      }
+      if (effects.jet > 0) {
+        const dir = rover.vx < -5 ? -1 : 1;
+        c.save(); c.scale(dir, 1);
+        for (let j = 0; j < 4; j++) {
+          const tail = 42 + j * 13 + Math.sin(this.time * 30 + j) * 5;
+          ellipse(c, -tail, 3 + Math.sin(this.time * 9 + j) * 5, 12 - j * 2, 5 - j * .6, j ? '#65dcee' : '#ecffff');
+        }
+        c.restore();
+      }
       if (effects.shield > 0 || effects.spawnShield > 0 || player.spawnShield > 0) {
         const radius = (rover.stats.wheelbase || 64) * .70 + 20;
         const color = player.index === 1 ? '#9efff5' : '#ffe0a5';

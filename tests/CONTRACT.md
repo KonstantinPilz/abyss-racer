@@ -92,7 +92,7 @@ FIX2 rendering: `.setGraphics('crisp'|'performance')` applies a fixed density (C
 
 ## Online Versus (round 3)
 
-Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.0.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
+Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.0.1`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
 
 `new AR.Online(versus, {headless, now, ui})` decorates the existing versus controller while online is active. UI-free tests suppress only the versus presentation methods, as the existing logic fixture does. `attach('host'|'guest', transport, code)` binds a transport; `connected()` starts its handshake. The guest never calls `Rover.step`, `Versus.step`, pickup collection, projectile simulation, or match adjudication. `Versus.tick(dt, true)` is the host's unmodified fixed-step loop. Optional hooks in versus route online input, UI, phase and effect notifications; disabling `network` restores local mode.
 

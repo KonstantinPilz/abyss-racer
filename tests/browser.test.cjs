@@ -5,6 +5,21 @@ const puppeteer = require('/home/ubuntu/projects/mcp-chromium-arm64/node_modules
 const executablePath = process.env.ABYSS_CHROME || '/home/ubuntu/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const assert = (condition, message) => { if (!condition) throw new Error(message); console.log('PASS ' + message); };
+async function checkOnlineHelp(page, opener, label) {
+  await page.click(opener);
+  assert(await page.$eval('#dialog-overlay', n => !n.hidden), label + ' How-to-play dialog opens');
+  const tip = await page.$eval('#help-online', n => n.innerText);
+  assert(/Play on two phones/i.test(tip) && /create a room/i.test(tip) && /share.*four-character code.*join/i.test(tip) && /host picks the stage/i.test(tip), label + ' help explains room sharing, joining, and host stage choice');
+  assert(await page.$eval('#help-online', n => {
+    n.scrollIntoView({ block: 'nearest' });
+    const r = n.getBoundingClientRect(), card = n.closest('[role="dialog"]'), c = card.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.top >= c.top && r.bottom <= c.bottom &&
+      c.top >= 0 && c.bottom <= innerHeight && c.left >= 0 && c.right <= innerWidth && card.scrollWidth <= card.clientWidth;
+  }), label + ' online help fits the dialog and viewport without horizontal scrolling');
+  await page.screenshot({ path: '/tmp/abyss-help-' + label + '.png' });
+  await page.keyboard.press('Escape');
+  assert(await page.$eval('#dialog-overlay', n => n.hidden) && await page.$eval(opener, n => n === document.activeElement), label + ' help closes and restores focus');
+}
 let activeBrowser;
 (async () => {
   const browser = activeBrowser = await puppeteer.launch({ executablePath, headless: true, pipe: true, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--disable-software-rasterizer'], timeout: 15000 });
@@ -20,9 +35,9 @@ let activeBrowser;
   assert(await page.title() === 'Abyss Racer', 'Local file title loads');
   assert(await page.evaluate(() => AR.inspect().state) === 'TITLE', 'Initial state is TITLE');
   await page.screenshot({ path: '/tmp/abyss-title-desktop.png' });
-  await page.click('#title-help');
-  assert(await page.$eval('#dialog-overlay', n => !n.hidden), 'How-to-play dialog opens');
-  await page.keyboard.press('Escape');
+  await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });
+  await checkOnlineHelp(page, '#title-help', 'desktop');
+  await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
   await page.click('#enter-garage');
   assert(await page.$$eval('.vehicle-grid .item-card', n => n.length) === 5, 'Garage contains five vehicles');
   await page.screenshot({ path: '/tmp/abyss-garage-desktop.png' });
@@ -79,6 +94,12 @@ let activeBrowser;
   await delay(200);
   await page.screenshot({ path: '/tmp/abyss-title-mobile.png' });
   assert(await page.evaluate(() => document.documentElement.scrollWidth === innerWidth), 'Mobile has no horizontal overflow');
+  await checkOnlineHelp(page, '#help-button', 'phone');
+  await page.setViewport({ width: 320, height: 568, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await checkOnlineHelp(page, '#help-button', 'small-phone');
+  await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await checkOnlineHelp(page, '#help-button', 'landscape');
+  await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await page.click('#enter-garage');
   await page.click('#tab-vehicles');
   await page.screenshot({ path: '/tmp/abyss-garage-mobile.png' });

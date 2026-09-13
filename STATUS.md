@@ -1,5 +1,11 @@
 # Abyss Racer status
 
+## Player suggestion — 3.0.1
+
+Added a short “Play on two phones” tip to How to play explaining room creation, the four-character join code, and the host's stage choice. Browser coverage checks the copy, scrolling, and dialog focus at 1280×720, 390×844, 320×568, and 844×390; all four screenshots have been inspected. The suggestions test now verifies the submitted version against AR.VERSION instead of a fixed release number.
+
+Validation: `node tests/run-all.cjs` passed all 12 test suites and the rendering benchmark serially, including the live PeerJS broker and reconnect checks, with zero browser console or page errors. Changed scripts pass syntax checks and `git diff --check` passes. The noindex tag is present and docs/config.js is unchanged. Evidence: `/tmp/abyss-phones-suites.json`, `/tmp/abyss-help-{desktop,phone,small-phone,landscape}.png`, and `SUGGESTION_DONE.md`. No deployment performed.
+
 Round 3 is complete: online play between two devices, host-authoritative physics, QR rooms, reconnect and configurable Suggestions. All 12 test suites plus the rendering benchmark passed serially; final targeted network checks also pass. Solo and local Versus remain offline-capable. See PHONES_DONE.txt for measurements, screenshots and limitations. No deployment performed.
 
 1. Physics/data/terrain: complete. Node and Chromium PASS 15/15; six 60-second stage simulations; all 30 vehicle/stage landing combinations; zero settled rest motion; maximum penetration 0.037 px. Full throttle exceeds 200 m before first crash; beginner controls survive 1,599 m in 60 seconds.

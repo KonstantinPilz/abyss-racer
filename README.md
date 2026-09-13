@@ -82,6 +82,8 @@ Glowing **?** crates appear approximately every 120–200 m, with extra floating
 
 ## Play on two phones (online Versus)
 
+The **How to play** panel includes a short reminder to create a room, share its four-character code with a friend, and let the host pick the stage.
+
 Choose **PLAY ON TWO PHONES** on the title screen. On one device choose **Create room**, then have your friend scan the QR code, open **Copy link**, or choose **Join a room** and type the four-character code. Codes use uppercase letters and digits without I, L, O, 0 or 1. QR links use `https://konstantinpilz.github.io/abyss-racer/?join=CODE`; they open a prefilled join screen and wait for one tap to unlock audio and connect. A room accepts one guest. Keep both screens open.
 
 Each diver chooses their own vehicle. The host chooses ocean, round mode, distance, and best-of count; the guest sees those settings read-only. Changing a setting clears readiness. Both tap **READY**, then the host taps **START RACE**. Each browser saves its own copy of the P1/P2 rivalry tally when the match finishes. P1 means host and P2 means guest, regardless of whose device shows the tally. Competitive play leaves solo progression alone.

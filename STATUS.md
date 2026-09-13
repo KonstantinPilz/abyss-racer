@@ -1,6 +1,6 @@
 # Abyss Racer status
 
-FIX2 implemented and all nine regression suites pass. Retina backing sizes and screenshots verified; the target MacBook Pro frame rate remains unverified. Play `docs/index.html` directly or serve `docs/` with GitHub Pages. No build step, libraries, network assets, or deployment are required.
+Round 3 is complete: online play between two devices, host-authoritative physics, QR rooms, reconnect and configurable Suggestions. All 12 test suites plus the rendering benchmark passed serially; final targeted network checks also pass. Solo and local Versus remain offline-capable. See PHONES_DONE.txt for measurements, screenshots and limitations. No deployment performed.
 
 1. Physics/data/terrain: complete. Node and Chromium PASS 15/15; six 60-second stage simulations; all 30 vehicle/stage landing combinations; zero settled rest motion; maximum penetration 0.037 px. Full throttle exceeds 200 m before first crash; beginner controls survive 1,599 m in 60 seconds.
 2. Rendering: complete. All 30 stage/vehicle combinations checked. Chassis/dome/suspension art aligned to physics; cosmetic lights and paused-frame stability verified; native DPR 3 checked.
@@ -64,3 +64,44 @@ Both 1440×900 CSS game canvases have exactly 2880×1800 backing at DPR 2. Final
 Equal-resolution improvement: 69.9%. Measurements use actual rAF timestamps after warm-up, with both cameras/HUDs following a repeatable trajectory, on a 4-core ARM Neoverse-N1 server with GPU disabled. **60 fps was not achieved here; a 2019 MacBook Pro is unavailable, so its target frame rate is unverified.** Actual Safari/Firefox and human sound balance remain untested. Benchmark browsers ran serially.
 
 Evidence: `FIX2_DONE.txt`, `/tmp/abyss-fix2-fps-*.json`, `/tmp/abyss-fix2-graphics.json`, `/tmp/abyss-fix2-{solo,versus,overtake,explosion,blackout}.png`, `/tmp/abyss-fix2-gameplay.done`, and the executable suites. README and tests/CONTRACT.md updated. No work remains in flight; no deployment performed.
+
+
+## Round 3 — two phones and Suggestions complete
+
+Online Versus adds a title entry, four-character rooms, a self-contained QR encoder,
+copyable join links, per-device vehicles and readiness, host-selected match settings,
+full-screen own HUD/camera, four touch pedals, portrait support and optional wake lock.
+PeerJS 1.5.4 loads only on connecting, using the default public broker and the requested
+STUN/TURN servers. Two channels separate unordered snapshots/input from reliable events.
+The existing 120 Hz Versus loop owns every gameplay decision on the host; the guest
+renders interpolated snapshots without stepping physics. Input edges are acknowledged,
+held input expires after 400 ms, interpolation buffers 100 ms, and extrapolation ends
+at 150 ms. Reconnection restores a paused world before resuming; failure after 15 seconds
+abandons the unfinished match. Both browsers save completed tallies exactly once.
+
+Measured loopback: 20.0 snapshots/s, 30.0 inputs/s, 182-byte average / 388-byte peak,
+45 ms one-way delay with ±20 ms jitter and 20% state loss; mean echo RTT 95.5 ms.
+Actual public PeerJS broker test passed: 184-byte average / 481-byte peak,
+20.03 snapshots/s, host mean RTT 34.1 ms, guest mean RTT 32.4 ms.
+Both channels reconnected after forced closure; guest received the torpedo hit/explosion;
+both isolated browser contexts saved P1 1 / P2 0 / matches 1. Zero page or console errors.
+These are data-channel RTTs between two pages on one host, not cross-network phone tests.
+
+Suggestions reads docs/config.js, stays hidden until configured, submits the specified
+FormData/no-cors Google Form fields, includes only the requested context, and enforces
+a 20-second cooldown. A comments-only config stub is ready for the owner's endpoint.
+Mocked submission tests verify field mapping, confirmation, focus and rate limiting.
+
+All nine pre-existing regression suites, three new test suites and the rendering
+benchmark passed via node tests/run-all.cjs, run serially. Final focused loopback and
+real-broker tests passed after input timing/ACK and countdown UI refinements. One local
+blackout assertion now captures setup/advance/state in one browser task to eliminate
+an existing wall-clock race without relaxing its threshold. All 34 JS/CJS files parse;
+local asset references, noindex metadata and diff whitespace checks pass.
+
+Final host lobby/QR, guest join, both landscape race views (844×390 @2), and guest
+portrait race view (390×844 @2) personally inspected. The lobby fits in landscape;
+HUDs and pedals are accessible. Physical phones, Safari/Firefox, cross-network TURN,
+and hardware frame-rate targets remain unverified. CPU-only 1440×900 @2 benchmark:
+7.28 rendered fps. Documentation and executable protocol/QR tests are included.
+Evidence: PHONES_DONE.txt and /tmp/abyss-phones-*. No deployment or work left in flight.

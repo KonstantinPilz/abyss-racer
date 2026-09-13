@@ -1,8 +1,8 @@
 # Abyss Racer
 
-A complete underwater driving game made with plain HTML, CSS, Canvas 2D, and WebAudio. Drive a two-wheeled deep-sea rover across an endless seabed, collect pearls and oxygen, balance floaty jumps, and buy new vehicles, worlds, and upgrades. Local keyboard Versus adds a shared physics world, horizontal split-screen, three match modes, and nine competitive items. **Versus** adds two players on one keyboard, a shared ocean, split-screen cameras, and competitive items.
+A complete underwater driving game made with plain HTML, CSS, Canvas 2D, and WebAudio. Drive a two-wheeled deep-sea rover across an endless seabed, collect pearls and oxygen, balance floaty jumps, and buy new vehicles, worlds, and upgrades. Local keyboard Versus adds a shared physics world, split-screen cameras, three match modes, and nine competitive items. **Play on two phones** brings the same rivalry to two devices, each with its own full-screen view.
 
-Open **[docs/index.html](docs/index.html)** directly in a browser. No installation, libraries, network access, server, or build step is required. GitHub Pages can serve the repository's `docs/` folder unchanged.
+Open **[docs/index.html](docs/index.html)** directly in a browser. Solo and local Versus need no installation, libraries, network access, server, or build step. Online Versus requires internet access and downloads PeerJS only when creating or joining a room. GitHub Pages can serve the repository's `docs/` folder unchanged.
 
 ## Solo controls
 
@@ -80,9 +80,44 @@ Glowing **?** crates appear approximately every 120–200 m, with extra floating
 | **Pearl Magnet** | In Pearl Rush, steals **30%** of the opponent's round pearls, rounded down. Replaced by Turbo Current in other modes. A blacked-out user cannot use items until respawning. |
 | **Anchor Drop** | **Two uses per pickup**. Each drops an anchor behind the rover for **15 s**; an opponent hitting it takes a hard stop and bounce. |
 
+## Play on two phones (online Versus)
+
+Choose **PLAY ON TWO PHONES** on the title screen. On one device choose **Create room**, then have your friend scan the QR code, open **Copy link**, or choose **Join a room** and type the four-character code. Codes use uppercase letters and digits without I, L, O, 0 or 1. QR links use `https://konstantinpilz.github.io/abyss-racer/?join=CODE`; they open a prefilled join screen and wait for one tap to unlock audio and connect. A room accepts one guest. Keep both screens open.
+
+Each diver chooses their own vehicle. The host chooses ocean, round mode, distance, and best-of count; the guest sees those settings read-only. Changing a setting clears readiness. Both tap **READY**, then the host taps **START RACE**. Each browser saves its own copy of the P1/P2 rivalry tally when the match finishes. P1 means host and P2 means guest, regardless of whose device shows the tally. Competitive play leaves solo progression alone.
+
+Both screens show one full-screen viewport, their own oxygen/distance/item HUD, and the opponent-awareness arrow. Hold **Brake** or **Gas**, and tap **Ballast** or **Item**. Keyboard users can use either local Versus key set (A/D/W/S or arrows); Space also fires ballast. P/Escape pauses or resumes both divers, and M mutes your device. Touch pedals support multiple pointers and cancellation, account for safe areas, prevent scroll/zoom while driving, and use the dynamic viewport height. Portrait remains playable with a small rotation hint. Screen wake lock is requested where available.
+
+The host runs the **unchanged 120 Hz Versus physics and match rules** for both rovers, shared pickups, items, projectiles, oxygen/respawns, scores, and rounds. The guest never steps physics or decides outcomes. It sends held controls at approximately 30 Hz; input changes also travel immediately on the event channel. Cumulative sequence counters carry every burst/item edge across lost or reordered input updates, and the host releases held guest controls after 400 ms without input. The guest interpolates a short snapshot history 100 ms behind its estimated host clock and extrapolates at most 150 ms before freezing. Rovers, wheels and projectiles interpolate; crashes/respawns snap across discontinuities.
+
+Host snapshots run at **20 Hz**, normally about **180–185 bytes** of binary payload, bounded below 600 bytes. Positions have 1 cm precision in game metres; angles use 16 bits and effect timers use deciseconds. They carry both rover poses and HUD state, phase/timer/scores, up to 12 nearby projectiles, and bounded redundant pickup/event hints. Complete pickup/event batches and round/results metadata also use the reliable channel. Pickups regenerate deterministically from the shared stage/round seed, and the guest retains a collected-ID ledger. Event IDs deduplicate sounds, toasts, item hits and explosions. Reconnect synchronizes the complete collected ledger and paused world before resuming.
+
+Transport uses **PeerJS 1.5.4**, dynamically loaded from the requested cdnjs URL, with the default public PeerJS signalling broker, Google STUN, and Open Relay TURN on ports 80/443 (including TLS/TCP). Two binary data channels separate snapshots/input from ordered lobby/events. The state channel uses `reliable: false`; in this PeerJS release that means **unordered, with retransmission still enabled**, so stale sequence numbers are discarded and new state is skipped under backpressure. The event channel uses `reliable: true`. See the [PeerJS API](https://peerjs.com/client/api/peer) and [1.5.4 channel configuration](https://github.com/peers/peerjs/blob/v1.5.4/lib/negotiator.ts).
+
+Ping is an application round-trip measurement over the data channel, updated every two seconds. A connection attempt times out after 15 seconds with a retry action. A dropped channel or missing heartbeat freezes play with **Reconnecting…** for up to another 15 seconds; the guest redials the channels and disconnected peers reconnect to signalling. Both sides acknowledge a restored world before the host resumes. A manual pause stays paused. A failed recovery abandons the match without adding an unfinished tally. Completed results can still be recovered and saved once.
+
+Limitations: the free broker/relay has no availability guarantee, some mobile/corporate networks block TURN, and a host with low frame rate slows the authoritative simulation. Headless tests successfully negotiated through the real public broker, but two pages on one host do not prove connectivity across two mobile networks or relay availability. There is no host migration, matchmaking, spectator mode, or room recovery after reloading a page. Four-character codes are invitations, not authentication; share them with your intended rival. Backgrounding a phone can suspend networking and exhaust the reconnect window. Safari, Firefox, physical phones and cross-network TURN still need device testing.
+
+## Suggestions
+
+The title’s **Suggestions** button opens a dialog with a required idea/bug textarea and an optional name. Configure it by replacing the comments in `docs/config.js` with your Google Form action and field IDs:
+
+```js
+AR.CONFIG = {
+  suggestionsFormAction: 'https://docs.google.com/forms/d/e/YOUR_FORM_ID/formResponse',
+  suggestionsFields: {
+    text: 'entry.111111',
+    name: 'entry.222222',
+    context: 'entry.333333'
+  }
+};
+```
+
+The checked-in file is an empty configuration stub; the button stays hidden unless valid configuration exists. If the optional file is omitted, the button also stays hidden. The form must accept anonymous responses, and all three IDs must match its fields. Submissions POST `FormData` with `mode: 'no-cors'`. Context contains mode, `AR.VERSION`, viewport dimensions and user agent; no other personal information is collected automatically. A page-session cooldown allows one submission every 20 seconds, including across dialog closes/reopens. Fetch completion shows **“Thanks! Sent to the dev agent.”**; a network failure shows a retry message. Google’s opaque response cannot confirm that its form accepted the fields, so verify the configuration with a manual submission after creating your form.
+
 ## Architecture
 
-All files are strict-mode plain scripts sharing the `AR` namespace; there are no ES modules or fetched assets.
+All files are strict-mode plain scripts sharing the `AR` namespace; there are no ES modules or fetched game assets. Online connection alone downloads the optional PeerJS script; a configured suggestion submission also uses the network.
 
 | File | Responsibility |
 | --- | --- |
@@ -97,6 +132,11 @@ All files are strict-mode plain scripts sharing the `AR` namespace; there are no
 | `docs/save.js` | Versioned local save, migration/sanitization, purchases, records, achievements, XP, cosmetics and versus tally |
 | `docs/audio.js` | Gesture-unlocked WebAudio, two mixed engine oscillators, item cues, bubbles, pickups, heartbeat, impact and UI synthesis |
 | `docs/versus.js` | Setup, shared world, rounds, items, pickups, respawns, HUDs, results and debug inspection |
+| `docs/online-core.js` | Compact snapshots, interpolation, reliable input edges, event ledger, reconnect clock, headless loopback transport |
+| `docs/online-transport.js` | On-demand PeerJS, broker, STUN/TURN, two channels and redial |
+| `docs/online.js` / `online-ui.js` / `online.css` | Host/guest controllers, lobby, recovery, full-screen phone HUD and pedals |
+| `docs/qr.js` | Self-contained byte-mode QR v1–4 / EC M encoder and canvas output |
+| `docs/config.js` / `suggestions.js` | Optional Google Form configuration and suggestions dialog submission |
 | `docs/game.js` | Solo state transitions, shared animation-loop integration, input routing, pickups, tricks, economy integration and DOM updates |
 | `docs/selftest.js` / `selftest.html` | Shared Node/browser deterministic physics checks |
 
@@ -140,7 +180,7 @@ chromium --headless=new --no-sandbox --disable-gpu --dump-dom "file://$PWD/docs/
 
 `tests/edge.test.cjs` additionally checks controlled visibility events, large timestamp gaps, flip scoring, grounded airtime suppression, natural oxygen/crash endings, a motionless inverted dome rest ending in the real game-over screen after 0.608 simulated seconds, game-over audio silence, and mute persistence. Headless shell keeps tabs visible, so the visibility test explicitly simulates the browser event.
 
-`tests/browser.test.cjs` contains the full desktop/mobile integration smoke test used during development. It uses the environment's existing Puppeteer installation and an existing Chromium binary; those are test tooling only and are **not game dependencies**. Set `ABYSS_CHROME` to choose another installed browser and adjust the Puppeteer require path for a different environment. Tests cover navigation, keyboard driving/ballast/pause, real touch input, purchases, per-vehicle upgrades, reload persistence, reset confirmation, resizing, and application console/network checks. The browser suites use file URLs, an isolated temporary browser profile, and a debugging pipe, requiring no listening port.
+`tests/browser.test.cjs` contains the full desktop/mobile integration smoke test used during development. It uses the environment's existing Puppeteer installation and an existing Chromium binary; those are test tooling only and are **not game dependencies**. Set `ABYSS_CHROME` to choose another installed browser and adjust the Puppeteer require path for a different environment. Tests cover navigation, keyboard driving/ballast/pause, real touch input, purchases, per-vehicle upgrades, reload persistence, reset confirmation, resizing, and application console/network checks. The solo/local browser suites use file URLs, an isolated temporary browser profile, and a debugging pipe. The online integration suite serves `docs/` on an ephemeral loopback port and uses two isolated browser contexts with the actual public broker.
 
 Run the browser suites from the project root:
 
@@ -157,6 +197,20 @@ node tests/render-benchmark.cjs after-crisp
 `tests/render-benchmark.cjs` measures rendered animation frames over eight seconds after three seconds of warm-up, profiling renderer methods while both cameras follow a repeatable trajectory. Run it alone: concurrent Chromium tests compete for raster time. Its `AR.debug` fixture controls positions; simulation tick counters are never reported as rendered fps. JSON output goes to `/tmp/abyss-fix2-fps-<label>.json`.
 
 For local debugging, open `docs/index.html?debug=1`. `AR.inspect()` remains read-only and includes `players[]` and `versus` during competitive play. Only the debug query exposes `AR.debug.giveItem(playerIndex, itemId)`, `placePlayer(playerIndex, values)`, `crashPlayer(playerIndex)`, `setOxygen(playerIndex, value)`, `fireTorpedo(playerIndex)`, and `advance(seconds)`. Player indices are **0 for P1** and **1 for P2**; item IDs are `ink`, `torpedo`, `net`, `siphon`, `riptide`, `shield`, `turbo`, `magnet`, and `anchor`. `placePlayer` accepts `x`, `y`, `angle`, `vx`, `vy`, `oxygen`, and `pearls`; `advance` runs up to 120 seconds of fixed steps per call. Runtime mode IDs are `race`, `survival`, and `pearl`. See [tests/CONTRACT.md](tests/CONTRACT.md) for the script interfaces.
+
+Run **all suites serially**, including the online real-broker test and rendering benchmark:
+
+```sh
+node tests/run-all.cjs
+```
+
+New independent entry points are `node tests/online.test.cjs`, `node tests/suggestions.test.cjs`, and `node tests/online-browser.test.cjs`. The loopback test instantiates separate host and guest controllers headlessly (the simpler debug option; there is no second in-page renderer or `?online=loopback` UI). `AR.LoopbackTransport.pair({ latency, jitter, loss, seed })` supports deterministic manual `pump(milliseconds)`, `drop()` and `reconnect()`. Its interface matches the PeerJS transport: `on`, `send`, `reconnect`, `close`, and `connected`.
+
+The loopback suite tests input timeout/edge counters under loss, interpolation/extrapolation, pickup removal/regeneration, event deduplication, phase transitions, pause/reconnect/abandon, identical completed tallies and zero guest physics steps. Four checked-in QR vectors compare every module and interleaved error-correction byte with independently generated python-qrcode output; no Python or QR library is needed to run the tests. Suggestions tests mock fetch, verify fields/context, success, cooldown and dialog focus, and submit nothing externally.
+
+The real two-page Chromium suite covers room creation, lowercase auto-join, read-only guest settings, both ready, movement, multi-touch cancellation, torpedo hit/explosion delivery, real RTC channel renegotiation, round/match results, and persistence in both isolated browser contexts. If this host cannot download PeerJS or reach the broker, the suite reports `BROKER UNREACHABLE`; failures after connecting remain test failures. Phone captures go to `/tmp/abyss-phones-*.png`; metrics and serial-suite records go to `/tmp/abyss-phones-browser-results.json` and `/tmp/abyss-phones-suites.json`.
+
+With `?debug=1`, `AR.debug.online` exposes the controller and transport for tests, and `AR.inspect().online` reports role, room, RTT, payload sizes, event/recovery counts and collected IDs. Mutation hooks are disabled on the guest. Use the headless loopback controller for deterministic network-time advancement; normal browser debug hooks continue to exercise the authoritative host.
 
 Manual checks: drive over a crest and release throttle; land a ballast jump; try ice traction and volcanic updrafts; flip and counter-pitch; collect every pickup type; compare upgraded handling; mute and resume; rotate a phone; background and restore the tab. Inspect low-oxygen pulse/heartbeat and the summary's extra reward line.
 

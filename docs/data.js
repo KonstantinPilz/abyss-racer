@@ -1,6 +1,7 @@
 (function (root) {
   'use strict';
   const AR = root.AR = root.AR || {};
+  AR.VERSION = '3.0.0';
   AR.FIXED_DT = 1 / 120;
   AR.METRES_PER_PIXEL = 0.1;
   AR.STAGES = [

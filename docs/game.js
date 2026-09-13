@@ -36,11 +36,17 @@
     refreshWallet();
     $('enter-versus').focus({ preventScroll: true });
   });
+  const online = new AR.Online(versus);
+  $('enter-online').addEventListener('click', () => online.open());
   $('enter-versus').addEventListener('click', () => versus.open());
   const touchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
   $('enter-versus').hidden = touchDevice;
   $('versus-keyboard-note').hidden = !touchDevice;
-  if (new URLSearchParams(window.location.search).get('debug') === '1') AR.debug = versus.debug();
+  if (new URLSearchParams(window.location.search).get('debug') === '1') {
+    const debug = versus.debug();
+    AR.debug = Object.fromEntries(Object.entries(debug).map(([name, fn]) => [name, (...args) => online.active && online.role === 'guest' ? false : fn(...args)]));
+    AR.debug.online = online;
+  }
 
   function createScene(stageId, vehicleId) {
     const stage = stageById(stageId);
@@ -508,7 +514,7 @@
     if (!$('dialog-overlay').hidden) {
       if (event.code === 'Escape') { event.preventDefault(); closeDialog(); }
       if (event.code === 'Tab') {
-        const nodes = Array.from($('dialog-overlay').querySelectorAll('button, select, [tabindex="0"]')).filter(node => !node.disabled);
+        const nodes = Array.from($('dialog-overlay').querySelectorAll('button, select, input, textarea, [tabindex="0"]')).filter(node => !node.disabled);
         const first = nodes[0], last = nodes[nodes.length - 1];
         if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
@@ -522,7 +528,7 @@
     if (state !== STATES.RUNNING) return;
     if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].includes(event.code)) { event.preventDefault(); keys.add(event.code); if (['Space', 'ArrowUp'].includes(event.code) && !event.repeat) pendingBurst = true; }
   });
-  window.addEventListener('keyup', event => { keys.delete(event.code); versus.keys.delete(event.code); });
+  window.addEventListener('keyup', event => { keys.delete(event.code); versus.keys.delete(event.code); if (online.active) online.keyup(event); });
   window.addEventListener('blur', () => { clearInput(); pause(); });
   document.addEventListener('visibilitychange', () => {
     clearInput();
@@ -564,12 +570,15 @@
     frameRequest = requestAnimationFrame(frame);
   }
 
+  AR.initSuggestions({ openDialog, context: () => online.active ? 'online-' + online.role : versus.active ? 'local-versus' : state.toLowerCase() });
   scene = createScene('reef', 'rover');
   document.body.dataset.state = state;
   renderer.resize();
   sound.setMuted(save.data.settings.muted);
   refreshWallet();
   frameRequest = requestAnimationFrame(frame);
+  const joinCode = new URLSearchParams(window.location.search).get('join');
+  if (joinCode && /^[A-Za-z2-9]{4}$/.test(joinCode)) online.open(joinCode.toUpperCase());
   // Read-only inspection hook for browser smoke tests and troubleshooting.
-  AR.inspect = () => versus.active ? versus.inspect() : ({ state, angle: scene.rover.angle, omega: scene.rover.omega, vx: scene.rover.vx, vy: scene.rover.vy, grounded: scene.rover.grounded, bodyGrounded: scene.rover.bodyGrounded, sleeping: !!scene.rover.sleeping, terrainY: scene.terrain ? scene.terrain.height(scene.rover.x) : null, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
+  AR.inspect = () => versus.active ? { ...versus.inspect(), ...(online.active ? { state: 'ONLINE_' + (online.state === 'MATCH' ? versus.phase : online.state), online: online.inspect() } : {}) } : ({ state, angle: scene.rover.angle, omega: scene.rover.omega, vx: scene.rover.vx, vy: scene.rover.vy, grounded: scene.rover.grounded, bodyGrounded: scene.rover.bodyGrounded, sleeping: !!scene.rover.sleeping, terrainY: scene.terrain ? scene.terrain.height(scene.rover.x) : null, stage: scene.stage.id, vehicle: scene.vehicle.id, distance: run ? run.distance : 0, flips: run ? run.flips : 0, airtime: run ? run.airtime : 0, oxygen: scene.rover.oxygen, x: scene.rover.x, y: scene.rover.y, particles: scene.particles.length, pickups: scene.pickups.length, pearls: save.data.pearls, totalRuns: save.data.totalRuns });
 })();

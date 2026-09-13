@@ -8,7 +8,7 @@
   <meta name="description" content="Drive a little deep-sea rover across an endless ocean floor. Collect pearls, master floaty jumps, and explore six underwater worlds.">
   <title>Abyss Racer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%230b2935'/%3E%3Cpath d='M20 31a12 12 0 0 1 24 0' fill='%2385e7de'/%3E%3Crect x='10' y='30' width='44' height='18' rx='8' fill='%23ffb05c'/%3E%3Ccircle cx='20' cy='48' r='8' fill='%23051b26' stroke='%23c4d4d2' stroke-width='4'/%3E%3Ccircle cx='46' cy='48' r='8' fill='%23051b26' stroke='%23c4d4d2' stroke-width='4'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="versus.css">
+  <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="versus.css"><link rel="stylesheet" href="online.css">
 </head>
 <body>
   <canvas id="ocean" aria-label="Underwater racing game. Use the keyboard or on-screen pedals to drive."></canvas>
@@ -20,7 +20,7 @@
 
   <main id="screens">
     <section id="title-screen" class="screen" aria-labelledby="title-heading">
-      <div class="hero"><div class="eyebrow"><i></i> ADVENTURE BELOW THE SURFACE</div><h1 id="title-heading">ABYSS<br><span>RACER</span><span class="title-dot">.</span></h1><p>A little rover. An endless ocean.<br>How far can you go?</p><div class="hero-actions"><button id="enter-garage" class="button primary">LET’S DIVE IN <span>↗</span></button><button id="enter-versus" class="button secondary">VERSUS <span>⇄</span></button><span id="versus-keyboard-note" hidden>Versus needs a keyboard</span><button id="title-help" class="text-button">How to play <span>→</span></button></div><div class="hero-note"><span class="keycap">→</span> DRIVE <span class="note-dot">·</span> <span class="keycap">SPACE</span> RISE <span class="note-dot">·</span> FIND YOUR FLOW</div></div>
+      <div class="hero"><div class="eyebrow"><i></i> ADVENTURE BELOW THE SURFACE</div><h1 id="title-heading">ABYSS<br><span>RACER</span><span class="title-dot">.</span></h1><p>A little rover. An endless ocean.<br>How far can you go?</p><div class="hero-actions"><button id="enter-garage" class="button primary">LET’S DIVE IN <span>↗</span></button><button id="enter-versus" class="button secondary">VERSUS <span>⇄</span></button><span id="versus-keyboard-note" hidden>Versus needs a keyboard</span><button id="enter-online" class="button secondary">PLAY ON TWO PHONES <span>↗</span></button><button id="title-help" class="text-button">How to play <span>→</span></button><button id="title-suggestions" class="text-button" hidden>Suggestions</button></div><div class="hero-note"><span class="keycap">→</span> DRIVE <span class="note-dot">·</span> <span class="keycap">SPACE</span> RISE <span class="note-dot">·</span> FIND YOUR FLOW</div></div>
       <div class="expedition-label" aria-hidden="true"><span class="tiny-label">EXPEDITION 001</span><strong>CORAL REEF</strong><span><i class="live-dot"></i> READY FOR DESCENT</span></div>
       <div class="title-bottom"><div class="discovery"><span class="compass">✳</span><div><b>There’s a whole world down here.</b><span>6 ocean worlds <i> / </i> 5 unique rides <i> / </i> Endless seabed</span></div></div><div class="personal-best"><span class="tiny-label">YOUR DEEPEST RUN</span><b id="title-best">0 <small>m</small></b></div></div>
     </section>
@@ -47,6 +47,6 @@
   <div id="toast-stack" aria-live="polite" aria-atomic="false"></div>
   <footer id="footer"><span>Built by Konstantin's AI agents</span><span>STAY CURIOUS. DIVE DEEPER.</span></footer>
   <div id="dialog-overlay" class="dialog-overlay" hidden><section class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="dialog-heading" tabindex="-1"><button id="dialog-close" class="icon-button close-button" aria-label="Close dialog">×</button><div id="dialog-content"></div></section></div>
-  <script src="data.js"></script><script src="terrain.js"></script><script src="physics.js"></script><script src="contacts.js"></script><script src="save.js"></script><script src="audio.js"></script><script src="render.js"></script><script src="versus.js"></script><script src="game.js"></script>
+  <script src="data.js"></script><script src="terrain.js"></script><script src="physics.js"></script><script src="contacts.js"></script><script src="save.js"></script><script src="audio.js"></script><script src="render.js"></script><script src="versus.js"></script><script src="online-core.js"></script><script src="qr.js"></script><script src="online-transport.js"></script><script src="online-ui.js"></script><script src="online.js"></script><script src="config.js"></script><script src="suggestions.js"></script><script src="game.js"></script>
 </body>
 </html>

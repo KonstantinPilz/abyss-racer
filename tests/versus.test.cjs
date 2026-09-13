@@ -353,10 +353,13 @@ let browser;
   pass('real-time crash countdown respawns within 3 s upright at crash position, subtracts 15% oxygen, and blocks spawn-camping');
 
   await resetPositions(100, 700);
-  const oxygenStart = await inspect();
-  assert.equal(await page.evaluate(() => AR.debug.setOxygen(0, 0)), true);
-  await advance(.04);
-  const blackout = await inspect();
+  // Keep this 40 ms assertion in one browser task: separate protocol round trips
+  // allow real animation frames to consume its remaining 60 ms tolerance.
+  const { oxygenStart, blackout } = await page.evaluate(() => {
+    const oxygenStart = AR.inspect();
+    if (!AR.debug.setOxygen(0, 0)) throw new Error('Could not empty oxygen');
+    return { oxygenStart, blackout: AR.debug.advance(.04) };
+  });
   assert.equal(blackout.players[0].blackouts, oxygenStart.players[0].blackouts + 1);
   assert.equal(blackout.players[0].out, false); assert.ok(blackout.players[0].respawn > 3.9);
   assert.match(await page.$eval('#v-respawn-0', node => node.textContent), /OUT OF AIR · RESPAWN [34]\.\d s/);

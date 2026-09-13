@@ -6,3 +6,18 @@ DONE.txt
 FIX*.md
 run_codex*.sh
 *_DONE.txt
+PHONES.md
+suggestions_form.json
+suggestions/inbox.jsonl
+suggestions/state.json
+suggestions/*.log
+suggestions/run.lock
+suggestions/current.json
+suggestions/BRIEF_*.md
+suggestions/topic
+SUGGESTION_DONE.md
+
+# Round 3 validation report is a deliverable.
+!PHONES_DONE.txt
+codex_*.log
+*_DONE.txt

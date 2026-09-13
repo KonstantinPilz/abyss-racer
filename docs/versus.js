@@ -70,16 +70,18 @@
       $('versus-pause').onclick = () => this.pause();
     }
     open() {
+      if (this.network) return this.network.returnLobby();
       this.active = true; this.phase = 'SETUP'; this.clearKeys(); this.ready = [false, false];
       $('versus-root').hidden = false; this.sound.suspend(); this.show(); this.setupUI();
       $('versus-start').focus({ preventScroll: true });
     }
-    close() { this.active = false; this.clearKeys(); this.sound.suspend(); $('versus-root').hidden = true; this.exit(); }
+    close() { if (this.network) return this.network.close(); this.active = false; this.clearKeys(); this.sound.suspend(); $('versus-root').hidden = true; this.exit(); }
     show() {
       document.body.dataset.versus = this.phase;
       $('versus-setup').hidden = this.phase !== 'SETUP';
       $('versus-huds').hidden = this.phase === 'SETUP';
       $('versus-overlay').hidden = !['COUNTDOWN', 'ROUND_RESULT', 'MATCH_RESULT', 'PAUSED'].includes(this.phase);
+      if (this.network) this.network.show();
     }
     setupUI() {
       const t = this.save.data.versus;
@@ -104,6 +106,7 @@
     }
     confirm(i) { this.ready[i] = !this.ready[i]; this.setupUI(); if (this.ready.every(Boolean)) this.startMatch(); }
     keydown(e) {
+      if (this.network) return this.network.keydown(e);
       if (this.phase === 'SETUP' && e.target.matches('select') && !['Escape', 'KeyP'].includes(e.code)) return;
       if (CONTROL_CODES.includes(e.code) || ['Escape', 'KeyP'].includes(e.code)) e.preventDefault();
       this.sound.unlock();
@@ -123,13 +126,15 @@
       if (!e.repeat && ['KeyW', 'ArrowUp'].includes(e.code)) this.pendingBurst[e.code === 'KeyW' ? 0 : 1] = true;
       if (!e.repeat && ['KeyS', 'ArrowDown'].includes(e.code)) this.useItem(e.code === 'KeyS' ? 0 : 1);
     }
-    clearKeys() { this.keys.clear(); this.pendingBurst = [false, false]; }
+    clearKeys() { this.keys.clear(); this.pendingBurst = [false, false]; if (this.network) this.network.clearInput(); }
     controls(i) {
-      let throttle = this.keys.has(i ? 'ArrowRight' : 'KeyD'), brake = this.keys.has(i ? 'ArrowLeft' : 'KeyA');
+      const input = this.network ? this.network.controls(i) : { throttle: this.keys.has(i ? 'ArrowRight' : 'KeyD'), brake: this.keys.has(i ? 'ArrowLeft' : 'KeyA'), burst: this.keys.has(i ? 'ArrowUp' : 'KeyW') };
+      let { throttle, brake } = input;
       if (this.players[i].effects.riptide > 0) [throttle, brake] = [brake, throttle];
-      return { throttle, brake, burst: this.pendingBurst[i] || this.keys.has(i ? 'ArrowUp' : 'KeyW') };
+      return { throttle, brake, burst: this.pendingBurst[i] || input.burst };
     }
-    pause() {
+    pause(authoritative = false) {
+      if (this.network && !authoritative) return this.network.pause();
       this.clearKeys();
       if (!['RUNNING', 'COUNTDOWN', 'ROUND_RESULT'].includes(this.phase)) return;
       this.beforePause = this.phase; this.phase = 'PAUSED'; this.accumulator = 0; this.sound.suspend(); this.show();
@@ -137,8 +142,9 @@
       $('versus-resume').onclick = () => this.resume(); $('versus-abandon').onclick = () => this.open();
       $('versus-resume').focus({ preventScroll: true });
     }
-    resume() { if (this.phase !== 'PAUSED') return; this.phase = this.beforePause; this.lastCount = null; this.clearKeys(); this.accumulator = 0; this.sound.unlock(); this.show(); if (this.phase === 'ROUND_RESULT') this.resultUI(false); }
+    resume(authoritative = false) { if (this.network && !authoritative) return this.network.resume(); if (this.phase !== 'PAUSED') return; this.phase = this.beforePause; this.lastCount = null; this.clearKeys(); this.accumulator = 0; this.sound.unlock(); this.show(); if (this.phase === 'ROUND_RESULT') this.resultUI(false); }
     startMatch() {
+      if (this.network && !this.network.starting) return this.network.start();
       this.sound.unlock(); this.matchConfig = { ...this.config, vehicles: [...this.config.vehicles] };
       this.scores = [0, 0]; this.round = 1; this.matchSaved = false;
       this.totals = [0, 1].map(() => ({ bestDistance: 0, itemsLanded: 0, crashes: 0, torpedoesDodged: 0, blackouts: 0, itemsUsed: 0, pearls: 0 }));
@@ -163,9 +169,10 @@
         this.spawn(p, x); p.startX = p.maxX = x;
         return p;
       });
-      this.pickups = []; this.projectiles = []; this.explosions = []; this.shake = 0; this.flash = 0; this.generated = new Set(); this.collected = new Set(); this.contacts = 0; this.time = 0; this.remaining = 90;
+      this.pickups = []; this.projectiles = []; this.projectileSeq = 0; this.explosions = []; this.shake = 0; this.flash = 0; this.generated = new Set(); this.collected = new Set(); this.contacts = 0; this.time = 0; this.remaining = 90;
       this.cameras = [{}, {}]; this.accumulator = 0; this.clearKeys(); this.phase = 'COUNTDOWN'; this.phaseTime = 4; this.lastCount = null;
       this.generatePickups(); this.show(); this.hud();
+      if (this.network) this.network.roundStarted();
     }
     random(n) { const a = Math.sin(n * 127.1 + this.terrain.seed * 311.7) * 43758.5453; return a - Math.floor(a); }
     generatePickups() {
@@ -220,7 +227,7 @@
         else { p.pearls += q.type === 'gold' ? 100 : 5; this.sound.play(q.type === 'gold' ? 'gold' : 'pickup'); }
       }
     }
-    toast(message) { this.players.forEach(p => { p.toast = message; p.toastTime = 3; }); }
+    toast(message) { this.players.forEach(p => { p.toast = message; p.toastTime = 3; }); if (this.network) this.network.event('toast', { text: message }); }
     blocked(victim, attacker, id) {
       if (victim.out || victim.respawn) { this.toast('P' + (victim.index + 1) + ' is out of reach!'); return true; }
       if (victim.effects.spawnShield > 0 || victim.effects.shield > 0) {
@@ -231,6 +238,7 @@
       return false;
     }
     landed(attacker, victim, id) {
+      if (this.network) this.network.event('hit', { attacker: attacker.index, victim: victim.index, item: id });
       this.totals[attacker.index].itemsLanded++; victim.effects.hit = .8;
       this.toast('P' + (attacker.index + 1) + ' hit P' + (victim.index + 1) + ' with ' + ITEMS[id].name + '!');
     }
@@ -245,10 +253,10 @@
       else if (id === 'turbo') p.effects.turbo = 3;
       else if (id === 'anchor') {
         const x = p.rover.x - (p.rover.vx < -5 ? -1 : 1) * 70;
-        this.projectiles.push({ type: 'anchor', owner: index, x, y: this.terrain.height(x) - 16, life: 15 });
+        this.projectiles.push({ id: ++this.projectileSeq, type: 'anchor', owner: index, x, y: this.terrain.height(x) - 16, life: 15 });
       } else if (id === 'torpedo') {
         const direction = Math.sign(v.rover.x - p.rover.x) || 1, x = p.rover.x + direction * 65;
-        this.projectiles.push({ type: 'torpedo', owner: index, x, y: this.terrain.height(x) - 28, direction, life: 12, passed: false, nearest: Infinity });
+        this.projectiles.push({ id: ++this.projectileSeq, type: 'torpedo', owner: index, x, y: this.terrain.height(x) - 28, direction, life: 12, passed: false, nearest: Infinity });
       } else if (!this.blocked(v, p, id)) {
         if (id === 'ink') v.effects.ink = 3.5;
         if (id === 'net') v.effects.net = 4;
@@ -290,6 +298,7 @@
             if (q.type === 'torpedo') {
               r.crashed = 'Torpedoed!'; this.crash(v); v.effects.torpedo = 1;
               this.explosions.push({ x: q.x, y: q.y, life: .8, maxLife: .8 });
+              if (this.network) this.network.event('explosion', { x: q.x, y: q.y });
               this.shake = 1; this.flash = .22; this.sound.play('torpedoHit');
             } else { kick(r, -r.vx * 1.45, -110, Math.sign(r.vx) * 2.8); v.effects.anchor = 1; this.sound.play('crash'); }
             this.landed(p, v, q.type);
@@ -317,6 +326,7 @@
     }
     step(dt) {
       if (this.phase !== 'RUNNING') return;
+      if (this.network) this.network.consumeEdges();
       this.time += dt; this.remaining = Math.max(0, 90 - this.time);
       this.shake = Math.max(0, this.shake - dt * 2.8); this.flash = Math.max(0, this.flash - dt);
       for (const e of this.explosions) e.life -= dt;
@@ -411,7 +421,8 @@
       $('versus-overlay-content').innerHTML = '<div class="eyebrow">' + (match ? 'THE OCEAN HAS A CHAMPION' : 'ROUND ' + this.round + ' COMPLETE') + '</div><h2 class="' + (winner === 1 ? 'teal' : '') + '">' + title + '</h2><p>' + (match ? MODES[this.matchConfig.mode] + ' · ' + this.stage.name : this.roundReason) + '</p><div class="v-score"><span>P1</span> ' + this.scores[0] + ' <small>—</small> ' + this.scores[1] + ' <span>P2</span></div><div class="v-result-stats">' + cards + '</div>' + (match ? '<div class="v-result-actions"><button id="versus-rematch" class="button primary">REMATCH <span>R ↻</span></button><button id="versus-change" class="button secondary">Change setup</button><button id="versus-result-title" class="text-button">Title</button></div><small>Rivalry saved on this device.' + (!this.save.storageAvailable ? ' Storage unavailable — session only.' : '') + '</small>' : '<div class="v-next" id="versus-next">Next dive in 3…</div>');
       if (match) { $('versus-rematch').onclick = () => this.startMatch(); $('versus-change').onclick = () => this.open(); $('versus-result-title').onclick = () => this.close(); $('versus-rematch').focus({ preventScroll: true }); }
     }
-    tick(dt) {
+    tick(dt, authoritative = false) {
+      if (this.network && !authoritative) return this.network.tick(dt);
       this.frames++; this.frameSeconds += dt;
       if (['SETUP', 'PAUSED', 'MATCH_RESULT'].includes(this.phase)) return;
       this.accumulator += dt;
@@ -466,6 +477,7 @@
       }
     }
     draw(dt, fallback) {
+      if (this.network) return this.network.draw(dt, fallback);
       if (this.phase === 'SETUP') { this.renderer.draw(fallback, dt, 1); return; }
       const h = this.renderer.height, w = this.renderer.width;
       for (const p of this.players) {

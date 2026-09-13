@@ -66,7 +66,9 @@ A crash costs 2.5 seconds, then respawns the rover upright at the crash position
 
 ### Items
 
-Glowing **?** crates appear approximately every 120–200 m, with extra floating crates over ramps. There is one item slot; a crate is ignored while holding an item. The trailing player's item table favours attacks, while the leader gets more shields, turbo, and anchors. Every item has a distinct slot icon and synth cue, a shared toast, and visual feedback.
+Glowing **?** crates appear approximately every 120–200 m, with extra floating crates over ramps. There is one item slot; a crate is ignored while holding an item. Crates become more helpful as the current gap grows: from 20 m behind they favour Turbo Current, Torpedoes and Jellyfish Nets; at 60 m behind they give 50% Turbo, 30% Torpedo and 20% Net. Smaller gaps retain the varied trailing table, while the leader gets more shields, turbo, and anchors. Every item has a distinct slot icon and synth cue, a shared toast, and visual feedback.
+
+**Catch-up delivery:** stay at least 60 m behind for six continuous seconds with an empty item slot to receive a held **Turbo Current**, even if the leader collected all the crates. Use the normal Item control to activate it. Deliveries are at least 12 seconds apart and never replace a held item. Both racers must be active; a respawn or closing the gap below 60 m resets the six-second wait. Pause freezes the timers and each round resets them. This applies to all three modes in local and online Versus, using current progress from each racer's own start.
 
 | Item | Effect |
 | --- | --- |

@@ -64,7 +64,9 @@ Ordinary crashes increment the player's crash count, discard their item/effects,
 | `magnet` | Steal floor(opponent pearls ×0.3), Pearl Rush only; otherwise replace with turbo | victim `effects.magnet`, user `effects.magnetGain` |
 | `anchor` | Two charges; each placed anchor lasts 15 s and hard-stops/bounces the opponent | `charges`, `projectiles[].type === 'anchor'`; victim `effects.anchor` on hit |
 
-Each use has a distinct sound cue and toast in both viewports. Successful attacks increment the attacker's match `itemsLanded` and set victim `effects.hit`. Shielded attacks do not count as landed. Torpedoes visibly passing a nearby opponent increment that victim's `torpedoesDodged` and set `effects.dodged`. The leader's item table favours shield/turbo/anchor; the trailing table favours attacks. Ground crates are spaced 120–200 m with additional ramp crates.
+Each use has a distinct sound cue and toast in both viewports. Successful attacks increment the attacker's match `itemsLanded` and set victim `effects.hit`. Shielded attacks do not count as landed. Torpedoes visibly passing a nearby opponent increment that victim's `torpedoesDodged` and set `effects.dodged`. The leader's item table favours shield/turbo/anchor. The trailing table favours attacks below 20 m, Turbo/torpedo/net from 20 m, and 50% Turbo / 30% torpedo / 20% net at 60 m or more. Ground crates are spaced 120–200 m with additional ramp crates.
+
+Each player has host-owned `catchupWait` and `catchupCooldown` timers, initialized to zero each round. After pickups, crash handling and finish adjudication, an active round accumulates `catchupWait` up to 6 seconds while both racers are active, the slot is empty and the current progress deficit is at least 60 m. Otherwise it resets. At 6 seconds with no remaining cooldown, grant a one-charge held Turbo, reset the wait and set the cooldown to 12 seconds. Cooldown decreases during running simulation, including respawns; pause/countdown/results freeze both timers. Existing item snapshots, toast and sound events synchronize delivery without new protocol fields or guest simulation.
 
 ## Inspection and debug hooks
 
@@ -92,7 +94,7 @@ FIX2 rendering: `.setGraphics('crisp'|'performance')` applies a fixed density (C
 
 ## Online Versus (round 3)
 
-Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.0.1`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
+Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.1.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
 
 `new AR.Online(versus, {headless, now, ui})` decorates the existing versus controller while online is active. UI-free tests suppress only the versus presentation methods, as the existing logic fixture does. `attach('host'|'guest', transport, code)` binds a transport; `connected()` starts its handshake. The guest never calls `Rover.step`, `Versus.step`, pickup collection, projectile simulation, or match adjudication. `Versus.tick(dt, true)` is the host's unmodified fixed-step loop. Optional hooks in versus route online input, UI, phase and effect notifications; disabling `network` restores local mode.
 

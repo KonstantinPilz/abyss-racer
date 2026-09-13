@@ -82,6 +82,31 @@ const results = { broker: 'not attempted', screenshots: [], issues: [] };
  // Real multi-touch hold / cancel path, both independent pedals.
  const pedals = await guest.evaluate(() => ['online-throttle', 'online-burst'].map(id => { const r = document.getElementById(id).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }));
  const cdp = await guest.createCDPSession(); await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pedals.map((p, i) => ({ ...p, id: i + 1 })) }); await delay(160); assert.equal((await inspect(guest)).online.input.throttle, true); await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] }); await delay(100); assert.equal((await inspect(guest)).online.input.throttle, false);
+ // Exercise a natural delivery, with real terrain and no crate or debug item grant.
+ await guest.setViewport({ width: 393, height: 428, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+ const delivery = await host.evaluate(() => {
+  const n = AR.debug.online, v = n.v;
+  v.players.forEach((p, i) => {
+   AR.debug.placePlayer(i, { x: p.startX + (i ? 100 : 1000), oxygen: 100 });
+   p.item = null; p.charges = 0; p.catchupWait = 0; p.catchupCooldown = 0;
+  });
+  for (let i = 0; i < 732; i++) v.tick(AR.FIXED_DT, true);
+  n.snapshot(); return AR.inspect();
+ });
+ assert.equal(delivery.players[1].item, 'turbo'); assert.equal(delivery.players[1].charges, 1);
+ await guest.waitForFunction(() => AR.inspect().players[1].item === 'turbo');
+ assert.match(await guest.$eval('#online-item', e => e.textContent), /Turbo Current/);
+ const fits = await guest.$eval('#online-item', e => {
+  const r = e.getBoundingClientRect();
+  return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight && r.width >= 44 && r.height >= 44 && document.documentElement.scrollWidth === innerWidth;
+ });
+ assert(fits, 'Catch-up item remains tappable at the submitting player’s 393×428 viewport');
+ await snap(guest, 'catchup-short-phone');
+ await guest.tap('#online-item');
+ await guest.waitForFunction(() => AR.inspect().players[1].effects.turbo > 0);
+ assert.equal((await inspect(host)).players[1].itemsUsed, delivery.players[1].itemsUsed + 1);
+ await snap(guest, 'catchup-turbo-active');
+ pass('Trailing phone receives catch-up Turbo through real snapshots and activates it with the touch Item pedal at 393×428');
  // Place both through debug, then launch through the real item path. Packet delivery remains real WebRTC.
  await host.evaluate(() => { AR.debug.placePlayer(0, { x: 100, oxygen: 100 }); AR.debug.placePlayer(1, { x: 330, oxygen: 100 }); AR.debug.fireTorpedo(0); });
  await guest.waitForFunction(() => AR.inspect().online.metrics.hitEvents > 0, { timeout: 5000 });

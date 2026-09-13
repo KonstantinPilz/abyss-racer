@@ -164,7 +164,7 @@
       this.players = c.vehicles.map((id, index) => {
         const base = AR.getStats(id, Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5])));
         if (index) base.color = id === 'bike' ? '#609cf1' : '#56dce9';
-        const p = { index, base, effects: {}, distance: 0, maxX: 0, pearls: 0, crashes: 0, blackouts: 0, lives: 3, respawnKind: '', itemsUsed: 0, item: null, charges: 0, respawn: 0, out: false, catchup: false, slipstream: false, toast: '', toastTime: 0 };
+        const p = { index, base, effects: {}, distance: 0, maxX: 0, pearls: 0, crashes: 0, blackouts: 0, lives: 3, respawnKind: '', itemsUsed: 0, item: null, charges: 0, respawn: 0, out: false, catchup: false, slipstream: false, catchupWait: 0, catchupCooldown: 0, toast: '', toastTime: 0 };
         const x = ((index + this.round) % 2) ? 100 : -40;
         this.spawn(p, x); p.startX = p.maxX = x;
         return p;
@@ -208,10 +208,26 @@
     }
     currentDistance(p) { return (p.rover.x - p.startX) / 10; }
     rollItem(p) {
-      const behind = this.currentDistance(p) < this.currentDistance(this.players[1 - p.index]);
-      const table = behind ? ['torpedo', 'torpedo', 'ink', 'net', 'siphon', 'riptide', 'turbo', 'magnet', 'shield'] : ['shield', 'shield', 'turbo', 'turbo', 'anchor', 'ink', 'net'];
+      const gap = this.currentDistance(this.players[1 - p.index]) - this.currentDistance(p);
+      // Larger gaps favour speed and direct ways to open an overtaking window.
+      const table = gap >= 60 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'turbo', 'turbo', 'net', 'net'] :
+        gap >= 20 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'net', 'net', 'ink', 'magnet'] :
+        gap > 0 ? ['torpedo', 'torpedo', 'ink', 'net', 'siphon', 'riptide', 'turbo', 'magnet', 'shield'] : ['shield', 'shield', 'turbo', 'turbo', 'anchor', 'ink', 'net'];
       const id = table[Math.floor(Math.random() * table.length)];
       return id === 'magnet' && this.matchConfig.mode !== 'pearl' ? 'turbo' : id;
+    }
+    updateCatchupItems(dt) {
+      // The leader may already have taken every shared crate. Deliver a held
+      // boost through ordinary item state; online guests receive it in snapshots.
+      const racing = this.players.every(p => !p.out && !p.respawn && !p.rover.crashed && p.rover.oxygen > 0);
+      for (const p of this.players) {
+        p.catchupCooldown = Math.max(0, p.catchupCooldown - dt);
+        const gap = this.currentDistance(this.players[1 - p.index]) - this.currentDistance(p);
+        p.catchupWait = racing && !p.item && gap >= 60 ? Math.min(6, p.catchupWait + dt) : 0;
+        if (p.catchupWait < 6 - 1e-8 || p.catchupCooldown > 1e-8) continue;
+        p.item = 'turbo'; p.charges = 1; p.catchupWait = 0; p.catchupCooldown = 12;
+        this.toast('P' + (p.index + 1) + ' received catch-up Turbo Current!'); this.sound.play('chest');
+      }
     }
     collect() {
       for (const q of this.pickups) {
@@ -394,6 +410,7 @@
       }
       if (c.mode === 'survival' && alive.length < 2) { this.endRound(alive.length ? alive[0].index : this.compare('distance'), alive.length ? 'Last Sub Standing' : 'Both final lives lost · furthest wins'); return; }
       if (c.mode === 'pearl' && this.remaining <= 0) { this.endRound(this.compare('pearls'), 'Pearl Rush complete'); return; }
+      this.updateCatchupItems(dt);
     }
     compare(key) { const delta = this.players[0][key] - this.players[1][key]; return Math.abs(delta) < .001 ? -1 : delta > 0 ? 0 : 1; }
     endRound(winner, reason) {

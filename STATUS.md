@@ -1,5 +1,13 @@
 # Abyss Racer status
 
+## Player suggestion — 3.1.0
+
+Easier overtakes through stronger crate odds at 20/60 m behind and a held Turbo Current delivery after six continuous seconds at least 60 m behind with an empty slot. Deliveries are at least 12 seconds apart, require both racers to be active, preserve held items, and use existing item controls, physics and online snapshots. All three modes support the delivery in local and online Versus. How to play explains the mechanic; README and the interface contract document its rules.
+
+Validation: `node tests/run-all.cjs` passed all 12 test suites and the rendering benchmark serially using Chromium headless shell 1243. Coverage includes 27 physics checks, 13 progression/audio checks, 9 contact checks and 23 Versus logic checks. New regressions cover gap-dependent item odds, both player indices, all modes, delivery timing/cooldown, held anchor charges, pause, interrupted gaps, respawn, round reset, ordinary Turbo expiry and stacking, and over 10 m of additional gap closure in a three-second driving comparison. A loopback guest receives and uses the delivery exactly once under 20% state loss without simulating physics. The real broker test also delivers Turbo to the guest and activates it with the touch Item pedal at 393×428, then passes reconnect/results/persistence. All browser suites report zero console errors; no suggestion was sent externally.
+
+Personally inspected five help screenshots (desktop, phone, small phone, 393×428 and landscape), the local race screenshot, and both 393×428 phone screenshots showing delivery and Turbo activation. JS/CJS syntax checks and `git diff --check` pass; docs/config.js is unchanged and noindex remains present. Evidence: `/tmp/abyss-phones-suites.json`, `/tmp/abyss-phones-browser-results.json`, `/tmp/abyss-help-*.png`, `/tmp/abyss-phones-catchup-{short-phone,turbo-active}.png`, and `SUGGESTION_DONE.md`. CPU-only 1440×900 @2 rendering measured 7.38 fps, consistent with the existing hardware limitation. Physical Safari/iPhone testing remains unverified. No deployment performed.
+
 ## Player suggestion — 3.0.1
 
 Added a short “Play on two phones” tip to How to play explaining room creation, the four-character join code, and the host's stage choice. Browser coverage checks the copy, scrolling, and dialog focus at 1280×720, 390×844, 320×568, and 844×390; all four screenshots have been inspected. The suggestions test now verifies the submitted version against AR.VERSION instead of a fixed release number.

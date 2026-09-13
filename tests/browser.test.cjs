@@ -16,6 +16,13 @@ async function checkOnlineHelp(page, opener, label) {
     return r.width > 0 && r.height > 0 && r.top >= c.top && r.bottom <= c.bottom &&
       c.top >= 0 && c.bottom <= innerHeight && c.left >= 0 && c.right <= innerWidth && card.scrollWidth <= card.clientWidth;
   }), label + ' online help fits the dialog and viewport without horizontal scrolling');
+  const catchup = await page.$eval('#help-catchup', n => n.innerText);
+  assert(/60 m behind for 6 seconds/.test(catchup) && /empty item slot/.test(catchup) && /Item control/.test(catchup) && /12 seconds apart/.test(catchup), label + ' help explains catch-up delivery and activation');
+  assert(await page.$eval('#help-catchup', n => {
+    n.scrollIntoView({ block: 'nearest' });
+    const r = n.getBoundingClientRect(), card = n.closest('[role="dialog"]'), c = card.getBoundingClientRect();
+    return r.top >= c.top && r.bottom <= c.bottom && card.scrollWidth <= card.clientWidth;
+  }), label + ' catch-up help is readable inside the scrolling dialog');
   await page.screenshot({ path: '/tmp/abyss-help-' + label + '.png' });
   await page.keyboard.press('Escape');
   assert(await page.$eval('#dialog-overlay', n => n.hidden) && await page.$eval(opener, n => n === document.activeElement), label + ' help closes and restores focus');
@@ -97,6 +104,8 @@ let activeBrowser;
   await checkOnlineHelp(page, '#help-button', 'phone');
   await page.setViewport({ width: 320, height: 568, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await checkOnlineHelp(page, '#help-button', 'small-phone');
+  await page.setViewport({ width: 393, height: 428, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  await checkOnlineHelp(page, '#help-button', 'short-phone');
   await page.setViewport({ width: 844, height: 390, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   await checkOnlineHelp(page, '#help-button', 'landscape');
   await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });

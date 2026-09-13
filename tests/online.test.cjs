@@ -75,6 +75,26 @@ guest.pause(); pump(.3); assert.equal(host.v.phase, 'PAUSED'); assert.equal(gues
 ht.drop(); assert.equal(host.state, 'RECONNECTING'); assert.equal(host.v.phase, 'PAUSED'); pump(.8); // loopback reconnect() restores both ends; sync must complete before sim resumes
 pump(.5); assert.equal(host.state, 'MATCH'); assert.equal(guest.state, 'MATCH'); assert.equal(host.v.phase, 'RUNNING'); assert.deepEqual([...guest.v.collected].sort(), [...host.v.collected].sort());
 pass('Shared pause and reconnect restore paused authoritative world before resuming');
+// A delivery must reach the guest through the existing snapshot/event channels,
+// and the guest's ordinary item input must consume it exactly once under loss.
+const oldHeight = host.v.terrain.height, oldSlope = host.v.terrain.slope, oldGenerate = host.v.generatePickups;
+host.v.terrain.height = () => 400; host.v.terrain.slope = () => 0;
+host.v.pickups = []; host.v.generatePickups = () => {};
+host.control('item', false); guest.control('item', false);
+host.v.players.forEach((p, i) => {
+ host.v.debug().placePlayer(i, { x: p.startX + (i ? 0 : 800), oxygen: 100 });
+ p.item = null; p.charges = 0; p.catchupWait = 0; p.catchupCooldown = 0;
+});
+pump(5.5); assert.equal(host.v.players[1].item, null);
+pump(.8); assert.equal(host.v.players[1].item, 'turbo'); assert.equal(guest.v.players[1].item, 'turbo');
+assert.equal(guest.v.players[1].charges, 1); assert.match(guest.v.players[1].toast, /catch-up Turbo Current/);
+assert.equal(host.v.players[0].item, null); const usedBefore = host.v.players[1].itemsUsed;
+guest.control('item', true); pump(.5);
+assert.equal(host.v.players[1].itemsUsed, usedBefore + 1); assert.equal(guest.v.players[1].item, null);
+assert(guest.v.players[1].effects.turbo > 0); assert.equal(guestPhysics, 0);
+guest.control('item', false);
+host.v.terrain.height = oldHeight; host.v.terrain.slope = oldSlope; host.v.generatePickups = oldGenerate;
+pass('Automatic catch-up Turbo reaches the guest and fires exactly once through normal controls under 20% loss');
 host.v.debug().placePlayer(0, { x: host.v.players[0].startX + 5010, oxygen: 100 }); pump(.3); assert.equal(host.v.phase, 'ROUND_RESULT'); assert.equal(guest.v.phase, 'ROUND_RESULT'); pump(3.5);
 assert.equal(host.v.phase, 'MATCH_RESULT'); assert.equal(guest.v.phase, 'MATCH_RESULT'); assert.equal(host.v.save.data.versus.matches, 1); assert.deepEqual(host.v.save.data.versus, guest.v.save.data.versus);
 host.publishPhase(); pump(.3); assert.equal(guest.v.save.data.versus.matches, 1);

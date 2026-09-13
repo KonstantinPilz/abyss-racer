@@ -82,6 +82,100 @@ test('Item weighting follows current progress after a former leader falls behind
   } finally { vm.runInContext('Math.random = originalRandom;', context); }
 });
 
+test('Larger gaps favour overtaking items; even starts and leaders retain ordinary crates', () => {
+  const v = match();
+  const draws = (index, gap) => {
+    placeProgress(v, index, 0); placeProgress(v, 1 - index, gap);
+    const counts = {};
+    vm.runInContext('globalThis.originalRandom = Math.random;', context);
+    try {
+      for (let i = 0; i < 900; i++) {
+        vm.runInContext('Math.random = () => ' + (i + .5) / 900 + ';', context);
+        const id = v.rollItem(v.players[index]); counts[id] = (counts[id] || 0) + 1;
+        assert(AR.VERSUS_ITEMS[id]);
+      }
+    } finally { vm.runInContext('Math.random = originalRandom;', context); }
+    return counts;
+  };
+  for (const index of [0, 1]) {
+    const even = draws(index, 0), leader = draws(index, -80);
+    assert.deepEqual(even, leader, 'Starting-grid offset must not confer stronger items');
+    const close = draws(index, 10), medium = draws(index, 20), far = draws(index, 60);
+    assert(far.turbo >= 450, 'At least half of far-behind crates give a speed boost');
+    assert(far.turbo > medium.turbo && medium.turbo > close.turbo);
+    assert.equal((far.turbo || 0) + (far.torpedo || 0) + (far.net || 0), 900);
+    assert(!medium.anchor && !medium.shield && !medium.magnet);
+    v.matchConfig.mode = 'pearl'; assert(draws(index, 20).magnet > 0);
+    v.matchConfig.mode = 'race';
+  }
+});
+
+function supplyMatch(mode = 'race', trailer = 0) {
+  const v = match(mode);
+  v.pickups = []; v.generatePickups = () => {};
+  placeProgress(v, trailer, 0); placeProgress(v, 1 - trailer, 80);
+  return v;
+}
+function steps(v, count) { for (let i = 0; i < count; i++) v.tick(DT); }
+
+test('An empty-handed trailer receives a usable Turbo after six seconds in every mode', () => {
+  for (const mode of ['race', 'survival', 'pearl']) for (const index of [0, 1]) {
+    const v = supplyMatch(mode, index), p = v.players[index];
+    // Historical distance must not prevent a comeback after being knocked backward.
+    p.distance = 200; p.maxX = p.startX + 2000;
+    steps(v, 719); assert.equal(p.item, null);
+    steps(v, 1); assert.equal(p.item, 'turbo'); assert.equal(p.charges, 1);
+    assert.equal(v.players[1 - index].item, null); assert.equal(p.itemsUsed, 0);
+    assert.match(p.toast, /catch-up.*Turbo Current/i);
+    assert.equal(p.effects.turbo || 0, 0, 'Player chooses when to fire');
+    assert(v.useItem(index)); steps(v, 1);
+    near(p.rover.stats.topSpeed, p.base.topSpeed * 1.25 * 1.4, 'Existing Turbo and current stack');
+    assert.equal(p.itemsUsed, 1);
+    steps(v, 360); assert.equal(p.effects.turbo, 0);
+    near(p.rover.stats.topSpeed, p.base.topSpeed * 1.25, 'Turbo expires normally');
+    steps(v, 1438 - 360); // Total time since delivery stays below the 12-second cooldown.
+    assert.equal(p.item, null);
+    steps(v, 1); assert.equal(p.item, 'turbo');
+  }
+});
+
+test('Catch-up deliveries respect held items, interrupted gaps, pause, respawn and round reset', () => {
+  const v = supplyMatch(), p = v.players[0];
+  v.debug().giveItem(0, 'anchor'); steps(v, 840);
+  assert.equal(p.item, 'anchor'); assert.equal(p.charges, 2);
+  v.useItem(0); steps(v, 720); assert.equal(p.item, 'anchor'); assert.equal(p.charges, 1);
+  v.useItem(0); steps(v, 600); assert.equal(p.item, null);
+  placeProgress(v, 1, 59); steps(v, 1); placeProgress(v, 1, 80);
+  steps(v, 600); assert.equal(p.item, null, 'Closing the gap resets the six-second wait');
+  v.pause(); const before = [p.catchupWait, p.catchupCooldown, v.time]; steps(v, 1200);
+  assert.deepEqual([p.catchupWait, p.catchupCooldown, v.time], before); v.resume();
+  steps(v, 119); assert.equal(p.item, null); steps(v, 1); assert.equal(p.item, 'turbo');
+  v.round++; v.newRound(); assert(v.players.every(p => p.item === null && p.catchupWait === 0 && p.catchupCooldown === 0));
+  for (const index of [0, 1]) {
+    const blocked = supplyMatch(); steps(blocked, 600);
+    blocked.crash(blocked.players[index]); steps(blocked, 121);
+    assert.equal(blocked.players[0].item, null, 'No delivery during either racer’s respawn');
+    steps(blocked, 240); assert.equal(blocked.players[0].item, null, 'Respawn resets eligibility');
+  }
+  const blackout = supplyMatch('survival'); steps(blackout, 600);
+  blackout.debug().setOxygen(0, 0); steps(blackout, 121);
+  assert.equal(blackout.players[0].item, null); assert(blackout.players[0].respawn > 0);
+});
+
+test('Using the delivered Turbo closes more ground smoothly than the catch-up current alone', () => {
+  const gapAfter = turbo => {
+    const v = supplyMatch(); steps(v, 720);
+    if (turbo) assert(v.useItem(0));
+    v.keys.add('KeyD'); v.keys.add('ArrowRight'); steps(v, 360);
+    for (const p of v.players) {
+      assert.equal(p.crashes, 0); assert.equal(p.respawn, 0);
+      assert([p.rover.x, p.rover.y, p.rover.vx, p.rover.vy].every(Number.isFinite));
+    }
+    return v.currentDistance(v.players[1]) - v.currentDistance(v.players[0]);
+  };
+  assert(gapAfter(true) < gapAfter(false) - 10, 'Turbo should close at least 10 m more in three seconds');
+});
+
 function crossingMatch(before, speeds) {
   const v = match(); v.matchConfig.target = 500; v.pickups = [];
   v.players.forEach((p, index) => {

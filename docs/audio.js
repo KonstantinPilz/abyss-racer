@@ -138,6 +138,12 @@
           this.tone(150, 0.32, 0.13, 'sawtooth', 0, 760);
           this.noise(0.2, 0.12, 1900);
           break;
+        case 'torpedoHit':
+          this.noise(0.3, 0.42, 1800);
+          this.tone(78, 0.55, 0.3, 'sine', 0, 22);
+          this.tone(1200, 0.19, 0.13, 'triangle', 0, 170);
+          this.tone(230, 0.16, 0.085, 'sine', 0.13, 880);
+          break;
         case 'net':
           [340, 255, 190].forEach((frequency, index) => this.tone(frequency, 0.18, 0.1, 'triangle', index * 0.09, frequency * 0.7));
           break;

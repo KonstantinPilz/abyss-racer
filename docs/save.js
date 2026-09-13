@@ -76,7 +76,7 @@
       versus: { p1Wins: 0, p2Wins: 0, matches: 0 },
       xp: integer(source.xp, MAX_XP), level: 1, achievements: [],
       totals: { pearls: 0, chests: 0, golden: 0, flips: 0, airtime: 0, bursts: 0, maxFlips: 0 },
-      settings: { muted: false, headlight: 'aqua', trail: 'bubbles' }
+      settings: { muted: false, headlight: 'aqua', trail: 'bubbles', graphics: 'crisp' }
     };
     if (data.stages.includes(source.selectedStage)) data.selectedStage = source.selectedStage;
     if (data.vehicles.includes(source.selectedVehicle)) data.selectedVehicle = source.selectedVehicle;
@@ -97,6 +97,7 @@
     if (record(source.versus)) for (const key of Object.keys(data.versus)) data.versus[key] = integer(source.versus[key]);
     if (record(source.settings)) {
       data.settings.muted = source.settings.muted === true;
+      data.settings.graphics = source.settings.graphics === 'performance' ? 'performance' : 'crisp';
       for (const kind of ['headlight', 'trail']) {
         const cosmetic = AR.COSMETICS.find(item => item.kind === kind && item.id === source.settings[kind] && item.level <= data.level);
         if (cosmetic) data.settings[kind] = cosmetic.id;

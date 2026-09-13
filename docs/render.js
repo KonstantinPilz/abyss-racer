@@ -4,6 +4,15 @@
   const AR = root.AR = root.AR || {};
   const TAU = Math.PI * 2;
   const glowSprites = new Map();
+  const spriteCanvas = () => typeof root.OffscreenCanvas === 'function' ? new root.OffscreenCanvas(1, 1) : document.createElement('canvas');
+  const freezeSprite = canvas => canvas.transferToImageBitmap ? canvas.transferToImageBitmap() : canvas;
+  const releaseSprite = value => { const sprite = value.sprite || value; if (sprite.close) sprite.close(); };
+  function cacheSprite(cache, key, value, limit) {
+    cache.set(key, value);
+    if (cache.size > limit) { const oldest = cache.keys().next().value; releaseSprite(cache.get(oldest)); cache.delete(oldest); }
+  }
+  function clearSprites(cache) { for (const value of cache.values()) releaseSprite(value); cache.clear(); }
+
   const LIGHTS = { aqua: '#7fffe8', coral: '#ffad91', gold: '#ffe28c', violet: '#c2a6ff', pink: '#ff93df', ice: '#c0f5ff' };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const mix = (a, b, t) => a + (b - a) * t;
@@ -23,10 +32,10 @@
   function glow(c, x, y, r, color, alpha) {
     let sprite = glowSprites.get(color);
     if (!sprite) {
-      sprite = document.createElement('canvas'); sprite.width = sprite.height = 128;
+      sprite = spriteCanvas(); sprite.width = sprite.height = 128;
       const paint = sprite.getContext('2d'), gradient = paint.createRadialGradient(64, 64, 0, 64, 64, 64);
       gradient.addColorStop(0, color); gradient.addColorStop(1, 'transparent');
-      paint.fillStyle = gradient; paint.fillRect(0, 0, 128, 128); glowSprites.set(color, sprite);
+      paint.fillStyle = gradient; paint.fillRect(0, 0, 128, 128); sprite = freezeSprite(sprite); glowSprites.set(color, sprite);
     }
     c.save(); c.globalAlpha *= alpha === undefined ? 1 : alpha;
     c.drawImage(sprite, x - r, y - r, r * 2, r * 2); c.restore();
@@ -40,6 +49,7 @@
       this.awarenessCanvas = null; this.awarenessRegions = new Map();
       this.soloCamera = {}; this.chassisCache = new Map();
       this.decorationCache = new Map(); this.groundCache = new Map(); this.backdropCache = new Map(); this.vignetteCache = new Map();
+      this.decorationChunks = new Map(); this.spriteCache = new Map(); this.graphics = 'crisp';
       this.width = 1; this.height = 1; this.dpr = 1; this.time = 0;
       this.camX = 0; this.camY = 0; this.zoom = 1; this.lastTerrain = null; this.lastState = '';
       this.resize();
@@ -49,11 +59,31 @@
       const rect = this.canvas.getBoundingClientRect();
       this.width = Math.max(1, rect.width || root.innerWidth || 1280);
       this.height = Math.max(1, rect.height || root.innerHeight || 720);
-      this.nativeDpr = Math.max(1, root.devicePixelRatio || 1);
-      this.dpr = this.resolutionVersus ? Math.min(this.versusDensity || 1, this.nativeDpr, 1.5) : this.nativeDpr;
+      this.nativeDpr = clamp(root.devicePixelRatio || 1, 1, 2);
+      this.dpr = this.graphics === 'performance' ? 1 : this.nativeDpr;
       this.canvas.width = Math.round(this.width * this.dpr); this.canvas.height = Math.round(this.height * this.dpr);
       this.lightCanvas.width = this.canvas.width; this.lightCanvas.height = this.canvas.height;
       if (this.awarenessCanvas) this.resizeAwarenessLayer(rect);
+    }
+
+    setGraphics(value) {
+      this.graphics = value === 'performance' ? 'performance' : 'crisp';
+      this.resize();
+    }
+
+    // Rasterize geometry at the next quarter-zoom bucket, never below its
+    // screen density. Only the soft glows use small, intentionally soft sprites.
+    rasterScale() { return this.dpr * Math.max(.5, Math.ceil((this.zoom || 1) * 4) / 4); }
+
+    sprite(key, width, height, paint, scale = this.rasterScale()) {
+      key += ':' + scale;
+      let sprite = this.spriteCache.get(key);
+      if (!sprite) {
+        sprite = spriteCanvas(); sprite.width = Math.ceil(width * scale); sprite.height = Math.ceil(height * scale);
+        const context = sprite.getContext('2d'); context.scale(scale, scale); paint(context);
+        sprite = freezeSprite(sprite); cacheSprite(this.spriteCache, key, sprite, 96);
+      }
+      return sprite;
     }
 
     resizeAwarenessLayer(rect) {
@@ -82,34 +112,13 @@
       }
     }
 
-    updateResolution(versus, dt, rect) {
-      let density = this.dpr;
+    updateResolution(versus) {
       if (this.resolutionVersus !== versus) {
-        this.resolutionVersus = versus; this.slowFrames = this.fastFrames = 0; this.frameAverage = 1 / 60;
-        this.versusDensity = Math.min(this.nativeDpr, 1.5);
-        density = versus ? this.versusDensity : this.nativeDpr;
+        this.resolutionVersus = versus;
         this.showAwarenessLayer(versus);
       }
-      // The DOM instruments remain native resolution. Only the shared ocean
-      // buffer adapts after sustained slow frames: 24 samples above 22 ms lower
-      // density by .15, down to .5; five seconds near 60 fps gently restores it.
-      // Sampling only the first viewport avoids counting each frame twice.
-      if (versus && !(rect.y > 0) && dt > 0) {
-        this.frameAverage = mix(this.frameAverage, Math.min(dt, .15), .1);
-        this.slowFrames = this.frameAverage > 1 / 45 ? this.slowFrames + 1 : Math.max(0, this.slowFrames - 1);
-        this.fastFrames = this.frameAverage < 1 / 59 ? this.fastFrames + 1 : 0;
-        if (this.slowFrames >= 24) {
-          this.versusDensity = Math.max(.5, this.versusDensity - .15); this.slowFrames = this.fastFrames = 0;
-        } else if (this.fastFrames >= 300) {
-          this.versusDensity = Math.min(this.nativeDpr, 1.5, this.versusDensity + .05); this.fastFrames = 0;
-        }
-        density = this.versusDensity;
-      }
-      if (Math.abs(density - this.dpr) > .001) {
-        this.dpr = density;
-        this.canvas.width = Math.round(this.width * density); this.canvas.height = Math.round(this.height * density);
-        this.lightCanvas.width = this.canvas.width; this.lightCanvas.height = this.canvas.height;
-      }
+      const density = this.graphics === 'performance' ? 1 : clamp(root.devicePixelRatio || 1, 1, 2);
+      if (this.dpr !== density) this.resize();
     }
 
     draw(scene, dt, alpha) {
@@ -149,7 +158,7 @@
       Object.assign(camera, { camX: this.camX, camY: this.camY, zoom: this.zoom, lastTerrain: terrain, lastState: running ? 'RUNNING' : scene.state });
       const floor = running ? .67 : (w < 640 ? .70 : .64);
       let tx = w * .5 - this.camX * this.zoom, ty = h * floor - this.camY * this.zoom;
-      const shake = clamp(scene.shake || 0, 0, 10);
+      const shake = clamp((scene.shake || 0) * (versus ? 10 : 1), 0, 10);
       tx += Math.sin(this.time * 113) * shake; ty += Math.cos(this.time * 97) * shake * .6;
       camera.screenX = x * this.zoom + tx; camera.screenY = y * this.zoom + ty;
       camera.tx = tx; camera.ty = ty;
@@ -169,40 +178,43 @@
       this.particles(c, scene.particles || [], false);
       this.projectiles(c, scene.projectiles || [], alpha);
       if (versus) {
-        for (const player of scene.players) {
+        const ordered = [...scene.players].sort((a, b) => a.rover.x - b.rover.x);
+        const rear = ordered[0], leader = ordered[1];
+        const overlap = rear && leader && rear.rover.ghosting &&
+          Math.abs(rear.rover.x - leader.rover.x) < (rear.rover.stats.wheelbase + leader.rover.stats.wheelbase) / 2 + rear.rover.stats.radius + leader.rover.stats.radius &&
+          Math.abs(rear.rover.y - leader.rover.y) < 80;
+        for (const player of ordered) {
           if (!player.rover || !this.inView(player.rover.x, player.rover.y, 110)) continue;
           c.save(); if (player.out || player.respawn > 0 || player.respawnTimer > 0) c.globalAlpha = .32;
+          else if (overlap && player === rear) c.globalAlpha = .55;
           this.drawVehicle(c, player.rover, alpha, scene.headlight); c.restore();
           this.playerEffects(c, player, alpha);
         }
       } else this.drawVehicle(c, rover, alpha, scene.headlight);
       this.decorations(c, terrain, id, left, right, true);
       this.particles(c, scene.particles || [], true);
+      this.explosions(c, scene.explosions || []);
       c.restore();
       this.ambient(c, stage);
       if (id === 'abyss' || id === 'wreck' || id === 'volcanic') this.darkness(camera.screenX, camera.screenY, angle, scene.headlight, id);
       c.save(); c.translate(tx, ty); c.scale(this.zoom, this.zoom);
       this.floatingText(c, scene.texts || []); c.restore();
-      if (versus) {
+      {
         const key = [w, h, id].join(':');
         let sprite = this.vignetteCache.get(key);
         if (!sprite) {
-          sprite = document.createElement('canvas'); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
+          sprite = spriteCanvas(); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
           const paint = sprite.getContext('2d'); paint.scale(sprite.width / w, sprite.height / h);
           const gradient = paint.createRadialGradient(w * .51, h * .42, h * .25, w * .51, h * .45, Math.max(w, h) * .70);
           gradient.addColorStop(0, 'transparent'); gradient.addColorStop(1, id === 'abyss' ? 'rgba(0,0,9,.6)' : 'rgba(0,13,27,.48)');
-          paint.fillStyle = gradient; paint.fillRect(0, 0, w, h); this.vignetteCache.set(key, sprite);
-          if (this.vignetteCache.size > 8) this.vignetteCache.delete(this.vignetteCache.keys().next().value);
+          paint.fillStyle = gradient; paint.fillRect(0, 0, w, h); sprite = freezeSprite(sprite); cacheSprite(this.vignetteCache, key, sprite, 8);
         }
         c.drawImage(sprite, 0, 0, w, h);
-      } else {
-      const vignette = c.createRadialGradient(w * .51, h * .42, h * .25, w * .51, h * .45, Math.max(w, h) * .70);
-      vignette.addColorStop(0, 'transparent'); vignette.addColorStop(1, id === 'abyss' ? 'rgba(0,0,9,.6)' : 'rgba(0,13,27,.48)');
-      c.fillStyle = vignette; c.fillRect(0, 0, w, h);
       }
 
       if (versus) {
         this.viewportEffects(c, scene.player, camera, rect);
+        if (scene.flash > 0) { c.fillStyle = 'rgba(211,255,246,' + Math.min(.55, scene.flash * 2.5) + ')'; c.fillRect(0, 0, w, h); }
       }
       c.restore();
       if (versus) this.renderAwarenessLayer(scene, camera, rect, alpha);
@@ -213,37 +225,50 @@
       return !b || (x >= b.left - m && x <= b.right + m && y >= b.top - m && y <= b.bottom + m);
     }
 
+    explosions(c, explosions) {
+      for (const burst of explosions) {
+        if (burst.life <= 0 || !this.inView(burst.x, burst.y, 180)) continue;
+        const t = 1 - burst.life / burst.maxLife;
+        c.save(); c.translate(burst.x, burst.y); c.globalAlpha = 1 - t;
+        glow(c, 0, 0, 35 + t * 110, '#e9fff1', (1 - t) * .9);
+        c.strokeStyle = '#d8fff3'; c.lineWidth = 3 * (1 - t) + .5;
+        ellipse(c, 0, 0, 15 + t * 125, 15 + t * 95); c.stroke();
+        const count = this.graphics === 'performance' ? 14 : 28;
+        for (let i = 0; i < count; i++) {
+          const angle = i / count * TAU, distance = (30 + hash(i + 7) * 135) * t;
+          const x = Math.cos(angle) * distance, y = Math.sin(angle) * distance - t * t * 55;
+          const radius = 2 + hash(i + 31) * 6 + t * 3;
+          ellipse(c, x, y, radius, radius, 'rgba(171,255,234,.12)'); c.stroke();
+        }
+        c.restore();
+      }
+    }
+
     background(c, stage, p) {
       const w = this.viewWidth || this.width, h = this.viewHeight || this.height, t = this.time, id = stage.id;
-      if (this.versusView) {
+      {
         const key = [w, h, id].join(':');
         let sprite = this.backdropCache.get(key);
         if (!sprite) {
-          sprite = document.createElement('canvas'); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
+          sprite = spriteCanvas(); sprite.width = Math.ceil(w / 3); sprite.height = Math.ceil(h / 3);
           const paint = sprite.getContext('2d'); paint.scale(sprite.width / w, sprite.height / h);
           const bg = paint.createLinearGradient(0, 0, 0, h); bg.addColorStop(0, p.top || '#083e50'); bg.addColorStop(1, p.bottom || '#052c38');
           paint.fillStyle = bg; paint.fillRect(0, 0, w, h);
           glow(paint, w * .56, -h * .10, h * 1.2, id === 'volcanic' ? '#924f3a' : id === 'ice' ? '#94dced' : '#39c8bf', id === 'abyss' ? .08 : .19);
-          this.backdropCache.set(key, sprite);
-          if (this.backdropCache.size > 8) this.backdropCache.delete(this.backdropCache.keys().next().value);
+          if (id !== 'abyss' && id !== 'volcanic' && id !== 'wreck') {
+            paint.save(); paint.globalCompositeOperation = 'screen';
+            for (let i = 0; i < 5; i++) {
+              const x = w * (.09 + i * .17);
+              const g = paint.createLinearGradient(x, 0, x + h * .28, h);
+              g.addColorStop(0, 'rgba(146,245,232,.08)'); g.addColorStop(.65, 'rgba(106,237,221,.025)'); g.addColorStop(1, 'transparent');
+              paint.fillStyle = g; paint.beginPath(); paint.moveTo(x, -20); paint.lineTo(x + 28 + hash(i) * 37, -20);
+              paint.lineTo(x + h * .58 + 130, h); paint.lineTo(x + h * .43 - 30, h); paint.closePath(); paint.fill();
+            }
+            paint.restore();
+          }
+          sprite = freezeSprite(sprite); cacheSprite(this.backdropCache, key, sprite, 8);
         }
         c.drawImage(sprite, 0, 0, w, h);
-      } else {
-      const bg = c.createLinearGradient(0, 0, 0, h);
-      bg.addColorStop(0, p.top || '#083e50'); bg.addColorStop(1, p.bottom || '#052c38');
-      c.fillStyle = bg; c.fillRect(0, 0, w, h);
-      glow(c, w * .56, -h * .10, h * 1.2, id === 'volcanic' ? '#924f3a' : id === 'ice' ? '#94dced' : '#39c8bf', id === 'abyss' ? .08 : .19);
-      }
-      if (id !== 'abyss' && id !== 'volcanic' && id !== 'wreck') {
-        c.save(); c.globalCompositeOperation = 'screen';
-        for (let i = 0; i < (this.versusView ? 5 : 7); i++) {
-          const x = w * (.09 + i * .17) + Math.sin(t * .12 + i) * 22;
-          const g = c.createLinearGradient(x, 0, x + h * .28, h);
-          g.addColorStop(0, 'rgba(146,245,232,.08)'); g.addColorStop(.65, 'rgba(106,237,221,.025)'); g.addColorStop(1, 'transparent');
-          c.fillStyle = g; c.beginPath(); c.moveTo(x, -20); c.lineTo(x + 28 + hash(i) * 37, -20);
-          c.lineTo(x + h * .58 + 130, h); c.lineTo(x + h * .43 - 30, h); c.closePath(); c.fill();
-        }
-        c.restore();
       }
       // Procedural silhouettes are anchored to the world at different parallax rates.
       for (let layer = 0; layer < (this.versusView ? 2 : 3); layer++) {
@@ -291,6 +316,7 @@
         for (let j = 0; j < (this.versusView ? 5 : 7); j++) {
           const x = origin + hash(j + school * 17) * 165;
           const y = h * (.20 + school * .13) + hash(j + 23) * 58 + Math.sin(t * .6 + j) * 7;
+          if (x < -20 || x > w + 20 || y < -20 || y > h + 20) continue;
           const size = 2.7 + hash(j + 51) * 2.2;
           c.save(); c.translate(x, y); c.scale(direction, 1);
           ellipse(c, 0, 0, size * 1.7, size, c.fillStyle);
@@ -301,7 +327,7 @@
     }
 
     ground(c, terrain, p, left, right, bottom, id, texturePass) {
-      if (this.versusView && !texturePass) { this.versusGround(c, terrain, p, left, right, bottom, id); return; }
+      if (!texturePass) { this.versusGround(c, terrain, p, left, right, bottom, id); return; }
       const points = [];
       for (let x = Math.floor(left / 12) * 12; x <= right + 12; x += 12) points.push([x, terrain.height(x)]);
       const path = () => {
@@ -333,22 +359,23 @@
       }
     }
 
-    decorations(c, terrain, id, left, right, front) {
+    decorations(c, terrain, id, left, right, front, texturePass = false) {
+      if (!front && !texturePass) { this.cachedDecorations(c, terrain, id, left, right); this.vents(c, terrain, id, left, right); return; }
       const spacing = front ? 178 : 104;
       for (let i = Math.floor(left / spacing) - 1; i < right / spacing + 1; i++) {
         const seed = i + (front ? 702 : 123), n = hash(seed), x = i * spacing + hash(seed + 411) * spacing * .65;
         const y = terrain.height(x) + (front ? 18 : 3), size = 20 + hash(seed + 22) * (front ? 43 : 70);
+        if (!texturePass && !this.inView(x, y - size, 180)) continue;
         if (front && (n < .56 || Math.abs(x - this.roverX) < 92)) continue;
         c.save(); c.translate(x, y); c.scale(front ? 1.10 : 1, 1); c.globalAlpha = front ? .93 : .78;
-        if (this.versusView) {
-          const key = [id, seed, front, this.dpr].join(':');
+        if (!texturePass) {
+          const key = [id, seed, front, this.rasterScale()].join(':');
           let sprite = this.decorationCache.get(key);
           if (!sprite) {
-            sprite = document.createElement('canvas');
-            const scale = Math.min(1.5, this.dpr); sprite.width = Math.round(220 * scale); sprite.height = Math.round(300 * scale);
+            sprite = spriteCanvas();
+            const scale = this.rasterScale(); sprite.width = Math.round(220 * scale); sprite.height = Math.round(300 * scale);
             const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, 110 * scale, 270 * scale);
-            this.drawDecoration(paint, id, seed, n, size); this.decorationCache.set(key, sprite);
-            if (this.decorationCache.size > 128) this.decorationCache.delete(this.decorationCache.keys().next().value);
+            this.drawDecoration(paint, id, seed, n, size); sprite = freezeSprite(sprite); cacheSprite(this.decorationCache, key, sprite, 128);
           }
           if (id === 'kelp' || id === 'reef' || id === 'wreck') c.rotate(Math.sin(this.time * .6 + seed) * .015);
           c.drawImage(sprite, -110, -270, 220, 300);
@@ -360,17 +387,41 @@
           const x = i * 1050 + 520; this.wreck(c, x, terrain.height(x) + 13, hash(i + 719));
         }
       }
-      if (!front && id === 'volcanic') {
+    }
+
+    vents(c, terrain, id, left, right) {
+      if (id === 'volcanic') {
         for (let i = Math.max(0, Math.floor((left - 670) / 960)); i <= (right - 670) / 960; i++) {
           const x = 670 + i * 960, y = terrain.height(x);
+          if (!this.inView(x, y - 90, 160)) continue;
           glow(c, x, y - 20, 90, '#fa744a', .20);
           ellipse(c, x, y - 2, 24, 7, '#241f29'); ellipse(c, x, y - 3, 20, 4, '#ec9b57');
-          for (let j = 0; j < 14; j++) {
+          for (let j = 0; j < (this.graphics === 'performance' ? 6 : 14); j++) {
             const rise = ((this.time * (24 + j * 3) + j * 21) % 190);
             c.save(); c.globalAlpha = (1 - rise / 190) * .30;
             ellipse(c, x + Math.sin(rise * .035 + j) * (8 + rise * .07), y - 5 - rise, 2 + rise * .02, 4 + rise * .04, '#ffb46f'); c.restore();
           }
         }
+      }
+    }
+
+    cachedDecorations(c, terrain, id, left, right) {
+      if (this.decorationTerrain !== terrain) { this.decorationTerrain = terrain; clearSprites(this.decorationChunks); }
+      const scale = this.rasterScale();
+      for (let chunk = Math.floor(left / 512); chunk <= Math.floor(right / 512); chunk++) {
+        const key = chunk + ':' + scale;
+        let tile = this.decorationChunks.get(key);
+        if (!tile) {
+          const from = chunk * 512; let low = Infinity, high = -Infinity;
+          for (let x = from - 200; x <= from + 712; x += 24) { const y = terrain.height(x); low = Math.min(low, y); high = Math.max(high, y); }
+          const canopy = id === 'kelp' ? 230 : id === 'wreck' ? 250 : 145;
+          const top = Math.floor(low - canopy), height = Math.ceil(high + 24 - top);
+          let sprite = spriteCanvas(); sprite.width = Math.ceil(512 * scale); sprite.height = Math.ceil(height * scale);
+          const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, -from * scale, -top * scale);
+          this.decorations(paint, terrain, id, from - 200, from + 712, false, true);
+          sprite = freezeSprite(sprite); tile = { sprite, x: from, y: top, height }; cacheSprite(this.decorationChunks, key, tile, 24);
+        }
+        if (tile.y <= this.bounds.bottom && tile.y + tile.height >= this.bounds.top) c.drawImage(tile.sprite, tile.x, tile.y, 512, tile.height);
       }
     }
 
@@ -407,28 +458,26 @@
     }
 
     versusGround(c, terrain, palette, left, right, bottom, id) {
-      // Terrain is immutable within a round. Rasterized strips include the
-      // exact same collision edge, sand and stones as the full solo painter.
-      c.fillStyle = palette.ground || '#173b3c'; c.beginPath();
-      for (let x = Math.floor(left / 12) * 12; x <= right + 12; x += 12) {
-        if (x === Math.floor(left / 12) * 12) c.moveTo(x, terrain.height(x)); else c.lineTo(x, terrain.height(x));
-      }
-      c.lineTo(right + 24, bottom); c.lineTo(left - 24, bottom); c.closePath(); c.fill();
-      if (this.groundTerrain !== terrain) { this.groundTerrain = terrain; this.groundCache.clear(); }
+      // Chunk tiles contain both the fill and the sand edge. The solid extension
+      // below each tile is a rectangle, so no terrain path is rebuilt per frame.
+      if (this.groundTerrain !== terrain) { this.groundTerrain = terrain; clearSprites(this.groundCache); }
+      const scale = this.rasterScale();
       for (let chunk = Math.floor(left / 512); chunk <= Math.floor(right / 512); chunk++) {
-        const key = chunk + ':' + this.dpr;
+        const key = chunk + ':' + scale;
         let tile = this.groundCache.get(key);
         if (!tile) {
           const from = chunk * 512; let low = Infinity, high = -Infinity;
-          for (let x = from - 12; x <= from + 524; x += 8) { const y = terrain.height(x); low = Math.min(low, y); high = Math.max(high, y); }
-          const top = Math.floor(low - 20), height = Math.ceil(high + 220 - top), scale = Math.min(1.5, this.dpr);
-          const sprite = document.createElement('canvas'); sprite.width = Math.round(512 * scale); sprite.height = Math.round(height * scale);
-          const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, -from * scale, -top * scale);
-          this.ground(paint, terrain, palette, from - 12, from + 524, top + height, id, true);
-          tile = { sprite, x: from, y: top, height }; this.groundCache.set(key, tile);
-          if (this.groundCache.size > 32) this.groundCache.delete(this.groundCache.keys().next().value);
+          for (let x = from - 24; x <= from + 536; x += 8) { const y = terrain.height(x); low = Math.min(low, y); high = Math.max(high, y); }
+          const top = Math.floor(low - 20), height = Math.ceil(high + 160 - top);
+          let sprite = spriteCanvas(); sprite.width = Math.ceil(514 * scale); sprite.height = Math.ceil(height * scale);
+          const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, -(from - 1) * scale, -top * scale);
+          this.ground(paint, terrain, palette, from - 24, from + 536, top + height + 1, id, true);
+          sprite = freezeSprite(sprite); tile = { sprite, x: from - 1, y: top, height }; cacheSprite(this.groundCache, key, tile, 32);
         }
-        c.drawImage(tile.sprite, tile.x, tile.y, 512, tile.height);
+        if (tile.y > this.bounds.bottom) continue;
+        c.fillStyle = palette.ground || '#173b3c';
+        if (bottom > tile.y + tile.height - 1) c.fillRect(tile.x, tile.y + tile.height - 1, 514, bottom - tile.y - tile.height + 2);
+        if (tile.y + tile.height >= this.bounds.top) c.drawImage(tile.sprite, tile.x, tile.y, 514, tile.height);
       }
       if (id !== 'abyss') {
         c.strokeStyle = id === 'volcanic' ? 'rgba(255,173,95,.07)' : 'rgba(180,255,221,.07)'; c.lineWidth = 1.5;
@@ -503,9 +552,19 @@
       }
     }
 
-    pickups(c, pickups) {
+    pickups(c, pickups, texturePass = false) {
       for (const item of pickups) {
-        if (item.collected || !this.inView(item.x, item.y, 35)) continue;
+        if (item.collected || (!texturePass && !this.inView(item.x, item.y, 48))) continue;
+        if (!texturePass) {
+          const sprite = this.sprite('pickup:' + item.type, 112, 112, paint => {
+            paint.translate(56, 56); const time = this.time; this.time = 0;
+            this.pickups(paint, [{ ...item, x: 0, y: 0 }], true); this.time = time;
+          });
+          const bob = item.type === 'chest' ? 0 : Math.sin(this.time * 2.7 + item.x * .017) * 3;
+          c.save(); c.translate(item.x, item.y + bob);
+          if (item.type === 'crate') { const pulse = 1 + Math.sin(this.time * 3 + item.x) * .07; c.scale(pulse, pulse); }
+          c.drawImage(sprite, -56, -56, 112, 112); c.restore(); continue;
+        }
         const bob = item.type === 'chest' ? 0 : Math.sin(this.time * 2.7 + item.x * .017) * 3;
         c.save(); c.translate(item.x, item.y + bob);
         if (item.type === 'crate') {
@@ -586,10 +645,14 @@
           }
           c.globalAlpha = 1; glow(c, -20, 0, 23, '#fff0b4', .4);
           c.fillStyle = '#5d858f'; c.beginPath(); c.moveTo(-20, -4); c.lineTo(-29, -12); c.lineTo(-27, 12); c.lineTo(-20, 4); c.fill();
-          const hull = c.createLinearGradient(0, -8, 0, 8); hull.addColorStop(0, '#e2f2f0'); hull.addColorStop(.45, '#98bbc0'); hull.addColorStop(1, '#426773');
-          ellipse(c, 0, 0, 25, 8, hull); c.strokeStyle = '#183943'; c.lineWidth = 2; c.stroke();
-          ellipse(c, 18, 0, 7, 7, color); c.fillStyle = '#254c59'; c.fillRect(-12, -7, 3, 14);
-          ellipse(c, 4, -2, 3, 2, '#f7ffff');
+          const body = this.sprite('torpedo:' + color, 56, 22, paint => {
+            paint.translate(28, 11);
+            const hull = paint.createLinearGradient(0, -8, 0, 8); hull.addColorStop(0, '#e2f2f0'); hull.addColorStop(.45, '#98bbc0'); hull.addColorStop(1, '#426773');
+            ellipse(paint, 0, 0, 25, 8, hull); paint.strokeStyle = '#183943'; paint.lineWidth = 2; paint.stroke();
+            ellipse(paint, 18, 0, 7, 7, color); paint.fillStyle = '#254c59'; paint.fillRect(-12, -7, 3, 14);
+            ellipse(paint, 4, -2, 3, 2, '#f7ffff');
+          });
+          c.drawImage(body, -28, -11, 56, 22);
         }
         c.restore();
       }
@@ -643,8 +706,7 @@
     }
 
     renderAwarenessLayer(scene, camera, rect, alpha) {
-      // Names and gap readouts are UI: keep their 11 px lettering native even
-      // when the ocean buffer adapts. Clear only last frame's small label areas.
+      // Clear only the small label areas that changed. HUD text lives in the DOM.
       const c = this.awarenessCtx, density = this.nativeDpr;
       const key = [rect.x || 0, rect.y || 0, rect.width, rect.height].join(':');
       c.save(); c.setTransform(density, 0, 0, density, (rect.x || 0) * density, (rect.y || 0) * density);
@@ -666,9 +728,16 @@
         const color = player.index === 1 ? '#83f4ed' : '#ffd092';
         if (x >= 35 && x <= w - 35 && y >= 145 && y <= h - 14) {
           const yy = Math.max(153, y - 61 * this.zoom);
-          c.fillStyle = '#0a2632'; roundRect(c, x - 17, yy - 10, 34, 20, 8); c.fill();
-          c.strokeStyle = color; c.lineWidth = 1; c.stroke(); c.fillStyle = color; c.fillText('P' + (player.index + 1), x, yy);
-          areas.push({ x: x - 17, y: yy - 10, width: 34, height: 20 });
+          const other = scene.players.find(p => p !== player), otherOld = other.rover.prev || other.rover;
+          const otherX = mix(otherOld.x, other.rover.x, alpha) * this.zoom + camera.tx;
+          const close = Math.abs(otherX - x) < 44 && Math.abs(other.rover.y - rover.y) * this.zoom < 30;
+          const labelX = close ? (x + otherX) / 2 + (player.index ? 22 : -22) : x;
+          const label = this.sprite('player-label:' + player.index, 36, 22, paint => {
+            paint.fillStyle = '#0a2632'; roundRect(paint, 1, 1, 34, 20, 8); paint.fill();
+            paint.strokeStyle = color; paint.lineWidth = 1; paint.stroke(); paint.fillStyle = color; paint.font = '800 11px system-ui, sans-serif'; paint.textAlign = 'center'; paint.textBaseline = 'middle'; paint.fillText('P' + (player.index + 1), 18, 11);
+          }, this.nativeDpr);
+          c.drawImage(label, Math.round(labelX - 18), Math.round(yy - 11), 36, 22);
+          areas.push({ x: labelX - 18, y: yy - 11, width: 36, height: 22 });
         } else if (player !== own && player.rover !== scene.rover) {
           const gap = Math.round(Math.abs(rover.x - scene.rover.x) * .1), ahead = rover.x >= scene.rover.x;
           const vertical = x >= 35 && x <= w - 35;
@@ -729,10 +798,19 @@
       }
       if (effects.ink > 0) {
         const elapsed = clamp(3.5 - effects.ink, 0, 3.5), spread = clamp(elapsed / .45, .1, 1);
-        const hole = mix(105, 25, clamp(elapsed / 3.1, 0, 1)), outer = Math.max(w, h) * 1.5;
-        const ink = c.createRadialGradient(x, y, hole, x, y, outer);
-        ink.addColorStop(0, 'rgba(1,3,13,0)'); ink.addColorStop(Math.min(.2, 52 / outer), 'rgba(2,4,17,.93)'); ink.addColorStop(1, 'rgba(1,2,10,.985)');
-        c.globalAlpha = spread * Math.min(1, effects.ink / .35); c.fillStyle = ink; c.fillRect(0, 0, w, h);
+        const hole = mix(105, 25, clamp(elapsed / 3.1, 0, 1));
+        const radius = hole + 52;
+        const ink = this.sprite('ink-opening', 256, 256, paint => {
+          const gradient = paint.createRadialGradient(128, 128, 72, 128, 128, 128);
+          gradient.addColorStop(0, 'rgba(1,3,13,0)'); gradient.addColorStop(1, 'rgba(1,2,10,.985)');
+          paint.fillStyle = gradient; paint.fillRect(0, 0, 256, 256);
+        }, 1);
+        c.globalAlpha = spread * Math.min(1, effects.ink / .35); c.fillStyle = 'rgba(1,2,10,.985)';
+        const top = clamp(y - radius, 0, h), bottom = clamp(y + radius, 0, h);
+        c.fillRect(0, 0, w, top); c.fillRect(0, bottom, w, h - bottom);
+        c.fillRect(0, top, Math.max(0, x - radius), bottom - top);
+        c.fillRect(x + radius, top, Math.max(0, w - x - radius), bottom - top);
+        c.drawImage(ink, x - radius, y - radius, radius * 2, radius * 2);
         c.save(); c.beginPath(); c.rect(0, 0, w, h); c.arc(x, y, hole + 32, 0, TAU, true); c.clip('evenodd');
         for (let j = 0; j < 9; j++) {
           const bx = w * hash(j + 633), by = h * hash(j + 34), radius = 35 + hash(j + 47) * 80;
@@ -766,22 +844,22 @@
       });
       wheels.forEach(wheel => this.wheel(c, wheel, id));
       c.translate(x, y); c.rotate(angle);
-      if (this.versusView) {
+      {
         // The pressure hull is rigid. Cache its detailed paint/glass work once
         // per tournament vehicle and colour; suspension and wheels stay live.
-        const key = [id, s.color, wb, headlight, this.dpr].join(':');
+        const key = [id, s.color, wb, headlight, this.rasterScale()].join(':');
         let sprite = this.chassisCache.get(key);
         if (!sprite) {
-          sprite = document.createElement('canvas');
-          const scale = Math.max(1.5, Math.min(3, this.dpr));
+          sprite = spriteCanvas();
+          const scale = this.rasterScale();
           sprite.width = 280 * scale; sprite.height = 150 * scale;
           const paint = sprite.getContext('2d'); paint.setTransform(scale, 0, 0, scale, 140 * scale, 80 * scale); paint.lineCap = 'round';
-          this.drawChassis(paint, rover, headlight, true); this.chassisCache.set(key, sprite);
+          this.drawChassis(paint, rover, headlight, true); sprite = freezeSprite(sprite); cacheSprite(this.chassisCache, key, sprite, 32);
         }
         c.drawImage(sprite, -140, -80, 280, 150);
         const tail = -wb * .64 - 15, spin = Math.cos(this.time * (10 + Math.abs(rover.vx) * .2));
         c.strokeStyle = '#b4c6b9'; c.lineWidth = 3; c.beginPath(); c.moveTo(tail, 1 - 13 * spin); c.lineTo(tail, 1 + 13 * spin); c.stroke();
-      } else this.drawChassis(c, rover, headlight, false);
+      }
       c.restore();
     }
 
@@ -842,7 +920,12 @@
     }
 
 
-    wheel(c, wheel, id) {
+    wheel(c, wheel, id, texturePass = false) {
+      if (!texturePass) {
+        const size = Math.ceil(wheel.radius + 4) * 2;
+        const sprite = this.sprite('wheel:' + id + ':' + wheel.radius, size, size, paint => this.wheel(paint, { ...wheel, x: size / 2, y: size / 2, angle: 0 }, id, true));
+        c.save(); c.translate(wheel.x, wheel.y); c.rotate(wheel.angle); c.drawImage(sprite, -size / 2, -size / 2, size, size); c.restore(); return;
+      }
       c.save(); c.translate(wheel.x, wheel.y); c.rotate(wheel.angle);
       const r = wheel.radius;
       ellipse(c, 0, 0, r + 1, r + 1, '#14333c'); ellipse(c, 0, 0, r - 2, r - 2, '#29464c');
@@ -858,8 +941,10 @@
     }
 
     particles(c, particles, front) {
+      let drawn = 0;
       for (const particle of particles) {
         if (particle.life <= 0 || (particle.type === 'sand') === front || !this.inView(particle.x, particle.y, 15)) continue;
+        if (++drawn > (this.graphics === 'performance' ? 40 : 100)) break;
         const alpha = clamp(particle.life / (particle.maxLife || 1), 0, 1);
         c.save(); c.globalAlpha = alpha;
         if (particle.type === 'bubble' || particle.type === 'bubbles') {
@@ -877,7 +962,7 @@
       const w = this.viewWidth || this.width, h = this.viewHeight || this.height, t = this.time;
       c.save();
       // Fixed-size deterministic particle field: nothing is allocated or retained per bubble.
-      for (let i = 0; i < (this.versusView ? 32 : 55); i++) {
+      for (let i = 0; i < (this.graphics === 'performance' ? 12 : this.versusView ? 24 : 40); i++) {
         const factor = .04 + hash(i + 629) * .10;
         const x = ((hash(i + 33) * w - this.camX * factor + Math.sin(t * .13 + i) * 15) % w + w) % w;
         const y = ((hash(i + 73) * h - t * (3 + hash(i) * 10)) % h + h) % h;
@@ -895,11 +980,19 @@
       c.fillStyle = stage === 'abyss' ? 'rgba(0,3,13,.965)' : stage === 'wreck' ? 'rgba(0,9,20,.36)' : 'rgba(8,4,16,.23)'; c.fillRect(0, 0, w, h);
       c.save(); c.translate(x, y); c.rotate(angle); c.globalCompositeOperation = 'destination-out';
       const radius = 145 * this.zoom;
-      const local = c.createRadialGradient(0, 0, 10, 0, 0, radius); local.addColorStop(0, 'rgba(0,0,0,.92)'); local.addColorStop(.45, 'rgba(0,0,0,.66)'); local.addColorStop(1, 'transparent');
-      c.fillStyle = local; c.fillRect(-radius, -radius, radius * 2, radius * 2);
-      const length = Math.min(700, w * .75), beam = c.createLinearGradient(20, 0, length, 0);
-      beam.addColorStop(0, 'rgba(0,0,0,.95)'); beam.addColorStop(.45, 'rgba(0,0,0,.82)'); beam.addColorStop(1, 'transparent');
-      c.fillStyle = beam; c.beginPath(); c.moveTo(30 * this.zoom, -6); c.lineTo(length, -length * .32); c.quadraticCurveTo(length * 1.12, 0, length, length * .32); c.closePath(); c.fill(); c.restore();
+      const local = this.sprite('headlight-local', 300, 300, paint => {
+        const gradient = paint.createRadialGradient(150, 150, 10, 150, 150, 150);
+        gradient.addColorStop(0, 'rgba(0,0,0,.92)'); gradient.addColorStop(.45, 'rgba(0,0,0,.66)'); gradient.addColorStop(1, 'transparent');
+        paint.fillStyle = gradient; paint.fillRect(0, 0, 300, 300);
+      }, 1);
+      c.drawImage(local, -radius, -radius, radius * 2, radius * 2);
+      const length = Math.min(700, w * .75);
+      const beam = this.sprite('headlight-beam', 790, 450, paint => {
+        paint.translate(0, 225); const gradient = paint.createLinearGradient(20, 0, 700, 0);
+        gradient.addColorStop(0, 'rgba(0,0,0,.95)'); gradient.addColorStop(.45, 'rgba(0,0,0,.82)'); gradient.addColorStop(1, 'transparent');
+        paint.fillStyle = gradient; paint.beginPath(); paint.moveTo(30, -6); paint.lineTo(700, -224); paint.quadraticCurveTo(784, 0, 700, 224); paint.closePath(); paint.fill();
+      }, 1);
+      c.drawImage(beam, 0, -length * 225 / 700, length * 790 / 700, length * 450 / 700); c.restore();
       this.ctx.drawImage(this.lightCanvas, 0, 0, Math.round(w * this.dpr), Math.round(h * this.dpr), 0, 0, w, h);
       const g = this.ctx; g.save(); g.translate(x, y); g.rotate(angle); g.globalAlpha = stage === 'abyss' ? .065 : .025;
       g.fillStyle = color; g.beginPath(); g.moveTo(33 * this.zoom, -2); g.lineTo(length, -length * .31); g.quadraticCurveTo(length * 1.1, 0, length, length * .31); g.closePath(); g.fill(); g.restore();
@@ -919,7 +1012,7 @@
       const stats = typeof vehicleId === 'object' ? vehicleId : AR.getStats(vehicleId, {});
       const c = canvas.getContext('2d'), rect = canvas.getBoundingClientRect();
       const w = rect.width || Number(canvas.getAttribute('width')) || 220, h = rect.height || Number(canvas.getAttribute('height')) || 110;
-      const dpr = Math.max(1, root.devicePixelRatio || 1); canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+      const dpr = clamp(root.devicePixelRatio || 1, 1, 2); canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
       c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
       glow(c, w * .5, h * .55, w * .45, stats.color || '#eba64b', .10);
       const radius = stats.radius || 18;

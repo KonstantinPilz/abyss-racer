@@ -38,33 +38,52 @@ function step(a, b, inputA = {}, inputB = {}) {
 let passes = 0;
 function test(name, fn) { const detail = fn(); console.log('PASS ' + name + (detail ? ': ' + detail : '')); passes++; }
 
-test('Opposing 400 px/s rovers collide without exchanging sides, every vehicle pairing', () => {
-  let count = 0, maxSpeed = 0;
+test('Opposing grounded rovers pass through safely, every vehicle pairing', () => {
+  let count = 0;
   for (const va of AR.VEHICLES) for (const vb of AR.VEHICLES) {
-    const a = rover(va.id, 100), b = rover(vb.id, 310);
+    const a = rover(va.id, 100), b = rover(vb.id, 210);
     velocity(a, 400); velocity(b, -400);
-    let hits = 0;
-    for (let i = 0; i < 50; i++) {
-      const contact = step(a, b); hits += contact.contacts; maxSpeed = Math.max(maxSpeed, contact.maxSpeed);
-      assert(a.x < b.x, va.id + '/' + vb.id + ' tunneled through');
+    let ghosts = false;
+    for (let i = 0; i < 100; i++) {
+      const contact = step(a, b); ghosts ||= a.ghosting;
+      assert.equal(contact.contacts, 0, va.id + '/' + vb.id + ' blocked a ground pass');
+      assert(!a.crashed && !b.crashed);
     }
-    assert(hits > 0, va.id + '/' + vb.id + ' failed to contact'); count++;
+    assert(ghosts); assert(a.x > b.x); count++;
   }
-  return count + ' pairs, max closing speed ' + maxSpeed.toFixed(1) + ' px/s';
+  return count + ' vehicle pairs';
 });
 
-test('Rear ram transfers forward velocity to the leader', () => {
-  const a = rover('rover', 100), b = rover('rover', 215);
-  velocity(a, 400); velocity(b, 0);
-  let hit, before;
-  for (let i = 0; i < 30; i++) {
-    before = b.vx; hit = step(a, b);
-    if (hit.contacts) break;
+test('A rover 15 px behind at 380 px/s passes a 200 px/s leader by 60 px within 2 s', () => {
+  const leader = rover('rover', 100), trailer = rover('rover', 85);
+  velocity(leader, 200); velocity(trailer, 380);
+  let bestLead = -15;
+  for (let i = 0; i < 2 / dt; i++) {
+    const result = step(leader, trailer);
+    assert.equal(result.contacts, 0); assert(!leader.crashed && !trailer.crashed);
+    bestLead = Math.max(bestLead, trailer.x - leader.x);
   }
-  assert(hit.contacts > 0, 'Rear ram missed');
-  assert(b.vx > before + 30, 'Leader was not shoved forward');
-  assert(a.vx < 400, 'Rammer did not slow');
-  return 'leader gained ' + (b.vx - before).toFixed(1) + ' px/s';
+  assert(bestLead > 60, 'Trailer only advanced ' + bestLead + ' px ahead');
+  return bestLead.toFixed(1) + ' px ahead';
+});
+
+test('Ghost contact mode survives jumps mid-overlap and resets beyond 1.2 rover lengths', () => {
+  const a = rover(), b = rover('rover', 115);
+  assert.equal(AR.resolveRoverContacts(a, b).contacts, 0); assert(a.ghosting && b.ghosting);
+  translate(b, 0, -65); velocity(b, 0, 220);
+  assert.equal(AR.resolveRoverContacts(a, b).contacts, 0); assert(a.ghosting && b.ghosting);
+  translate(b, (a.stats.wheelbase + a.stats.radius * 2) * 1.21, 0);
+  AR.resolveRoverContacts(a, b); assert(!a.ghosting && !b.ghosting);
+  translate(b, a.x + 15 - b.x, a.y - 60 - b.y); velocity(b, 0, 220);
+  assert(AR.resolveRoverContacts(a, b).contacts > 0, 'A later landing remained ghosted after separation');
+});
+
+test('A rover dropped 60 px above another still resolves a landing', () => {
+  const lower = rover(), upper = rover(); translate(upper, 0, -60);
+  let contacts = 0;
+  for (let i = 0; i < 120 && !contacts; i++) contacts += step(lower, upper).contacts;
+  assert(contacts > 0, 'Above landing was incorrectly ghosted');
+  assert(!upper.ghosting && !lower.ghosting);
 });
 
 test('A wheel falling onto the dome crushes the lower hull above 82 px/s', () => {
@@ -113,12 +132,12 @@ test('Resting touching rovers remain quiet for 20 seconds, every vehicle', () =>
   return 'worst settled drift ' + worst.toFixed(6) + ' px';
 });
 
-test('Deep scripted 40 px separation resolves finitely and records a contact', () => {
+test('Deep scripted 40 px ground overlap stays finite and ghosts', () => {
   const a = rover('rover', 100), b = rover('rover', 140);
   velocity(a, 100); velocity(b, -100);
   let contacts = 0;
   for (let i = 0; i < 120; i++) contacts += step(a, b, { throttle: true }, { brake: true }).contacts;
-  assert(contacts > 0);
+  assert.equal(contacts, 0);
 });
 
 test('Crashed rovers are omitted from contacts', () => {

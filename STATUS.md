@@ -1,6 +1,6 @@
 # Abyss Racer status
 
-Completed. Play `docs/index.html` directly or serve `docs/` with GitHub Pages. No build step, libraries, network assets, or deployment are required.
+FIX2 implemented and all nine regression suites pass. Retina backing sizes and screenshots verified; the target MacBook Pro frame rate remains unverified. Play `docs/index.html` directly or serve `docs/` with GitHub Pages. No build step, libraries, network assets, or deployment are required.
 
 1. Physics/data/terrain: complete. Node and Chromium PASS 15/15; six 60-second stage simulations; all 30 vehicle/stage landing combinations; zero settled rest motion; maximum penetration 0.037 px. Full throttle exceeds 200 m before first crash; beginner controls survive 1,599 m in 60 seconds.
 2. Rendering: complete. All 30 stage/vehicle combinations checked. Chassis/dome/suspension art aligned to physics; cosmetic lights and paused-frame stability verified; native DPR 3 checked.
@@ -21,7 +21,7 @@ Level-0 Reef Rover, 40 simulated seconds with the QA pulse/brake driver, no cras
 
 Validation: **27/27** shared physics checks in Node and real headless Chromium; **13/13** progression/audio suites; all JS/CJS syntax checks; both browser integration and edge suites pass over port-free file://. No app console errors/warnings or external requests. Existing filenames and all QA fields in AR.inspect are preserved. Details: `FIX1_DONE.txt`. No work remains in flight.
 
-## Versus round 2
+## Versus round 2 — original implementation (historical)
 
 Implemented and validated locally. Title/setup provides keyboard-only local Versus, all five vehicles at a fixed level-5 tune, all six stages, Race (500/1000/2000 m), Last Sub Standing, Pearl Rush (90 s), and best-of-1/3/5. One world runs both rovers at 120 Hz; clipped horizontal viewports have independent interpolated cameras and native-resolution HUDs/player tags/gap arrows.
 
@@ -42,3 +42,25 @@ Validation on final code:
 Performance limitation: CPU-only headless Chromium at 1440×900 measured 39.3 fps over the final suite's 5-second sample and 47.4 fps in a separate steady sample. Adaptive ocean rendering reached half density; HUD and awareness labels remain native. This improves the initial ~18 fps, but 60 fps on a normal laptop remains unverified. Firefox/Safari and human audio listening also remain untested. Run wall-clock browser suites serially on this CPU-constrained host; concurrent screenshot delays can move the rover across an oxygen pickup between a test's baseline and ballast assertion.
 
 Evidence: `tests/versus.done`, existing `tests/browser.done` / `tests/edge.done`, executable suites above, `/tmp/abyss-versus-*.png`, and `VERSUS_DONE.txt`. README and interface contract updated. No deployment performed; no work remains in flight.
+
+## Versus feedback fixes (FIX2) — complete, with performance limitation
+
+1. Ground passes ghost with hysteresis; the rear rover draws at 55% opacity. Above-rover landings and crushes stay physical. Catch-up adds up to 25% speed / 15% torque, fading between 60 and 20 m; grounded slipstream adds 10% within 8–40 m.
+2. Torpedoes travel at 959 px/s and instantly cause “Torpedoed!” with the normal 2.5-second respawn, crash/item credit, a bubble explosion, shared flash/shake, and a distinct cue. Shields and an actual keyboard ballast dodge pass regression checks.
+3. Race/Pearl Rush empty oxygen causes a 4-second blackout and 60% oxygen respawn. Blackouts are separate results statistics. Survival has three lives, tank HUD icons, and distance adjudication for simultaneous final losses. Crash oxygen penalties, siphon depletion, and same-step oxygen pickup rescue are covered.
+4. Crisp uses fixed DPR clamped to [1,2] in both modes. Manual Performance uses 1× and fewer particles; settings.graphics persists via the title help panel and versus setup. No automatic downscaling remains. Terrain/decorations cache by chunk and zoom bucket; rigid art, pickups, labels and gradients use bounded immutable sprite caches with canvas fallback. Per-viewport culling, particle caps, and unchanged-text guards reduce drawing work.
+
+Final validation: physics 27/27; progression/audio 13/13; contacts 9/9 (all 25 vehicle pairs, specified pass, hysteresis, 60 px landing); versus logic 19/19; versus save/audio; full versus Chromium integration; graphics; unchanged solo desktop/mobile integration and edge suites. All pass. JS/CJS syntax and git diff whitespace checks pass. Browser suites have zero application errors/warnings or external requests. The passing final versus suite uses 959 px/s torpedoes and the final immutable renderer caches.
+
+Both 1440×900 CSS game canvases have exactly 2880×1800 backing at DPR 2. Final solo/versus screenshots personally inspected: sharp text, rover outlines and terrain edges, no clipped HUDs. Additional overtake/explosion/blackout captures inspected; rear opacity is also asserted from the real Canvas context. Survival tank and compact HUD screenshots inspected.
+
+| Same headless workload, requested viewport 1440×900 @2× | Actual backing density | Rendered fps |
+| --- | --- | --- |
+| Old adaptive renderer | 0.9× at sample end | 11.38 |
+| Old renderer forced to Crisp resolution | 2× | 4.33 |
+| Final Crisp | 2× | 7.36 |
+| Final explicit Performance | 1× | 25.82 |
+
+Equal-resolution improvement: 69.9%. Measurements use actual rAF timestamps after warm-up, with both cameras/HUDs following a repeatable trajectory, on a 4-core ARM Neoverse-N1 server with GPU disabled. **60 fps was not achieved here; a 2019 MacBook Pro is unavailable, so its target frame rate is unverified.** Actual Safari/Firefox and human sound balance remain untested. Benchmark browsers ran serially.
+
+Evidence: `FIX2_DONE.txt`, `/tmp/abyss-fix2-fps-*.json`, `/tmp/abyss-fix2-graphics.json`, `/tmp/abyss-fix2-{solo,versus,overtake,explosion,blackout}.png`, `/tmp/abyss-fix2-gameplay.done`, and the executable suites. README and tests/CONTRACT.md updated. No work remains in flight; no deployment performed.

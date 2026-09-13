@@ -45,23 +45,30 @@ function near(actual, expected, message, epsilon = 1e-8) {
 let passed = 0;
 function test(name, work) { work(); passed++; console.log('PASS ' + name); }
 
-test('Catch-up follows present position, with 80 m / 30 m hysteresis', () => {
+test('Catch-up follows present position and fades from +25% speed/+15% torque at 60 m to zero at 20 m', () => {
   const v = match(), a = v.players[0], b = v.players[1];
-  // A historical lead must not grant the current leader a catch-up boost.
   a.distance = 1500; a.maxX = a.startX + 15000;
-  placeProgress(v, 0, 0); placeProgress(v, 1, 100);
-  v.step(DT);
-  assert(a.catchup && !b.catchup, 'Boost went to the historical trailer');
-  near(a.rover.stats.topSpeed, a.base.topSpeed * 1.12, 'Catch-up speed multiplier');
-  placeProgress(v, 1, 40); v.step(DT);
-  assert(a.catchup, 'Boost dropped before the gap reached 30 m');
-  placeProgress(v, 1, 29); v.step(DT);
-  assert(!a.catchup, 'Boost persisted inside 30 m');
-  near(a.rover.stats.topSpeed, a.base.topSpeed, 'Base speed restored');
-  placeProgress(v, 1, 79); v.step(DT);
-  assert(!a.catchup, 'Boost reactivated below 80 m');
-  placeProgress(v, 1, 81); v.step(DT);
-  assert(a.catchup, 'Boost failed to activate beyond 80 m');
+  for (const [gap, multiplier] of [[100, 1], [60, 1], [40, .5], [20, 0], [19, 0]]) {
+    placeProgress(v, 0, 0); placeProgress(v, 1, gap);
+    // This test isolates the current from the independently tested slipstream.
+    v.debug().placePlayer(0, { x: a.startX, y: -1000 });
+    v.step(DT);
+    assert.equal(a.catchup, multiplier > 0); assert(!b.catchup);
+    near(a.rover.stats.topSpeed, a.base.topSpeed * (1 + .25 * multiplier), 'Catch-up speed');
+    near(a.rover.stats.torque, a.base.torque * (1 + .15 * multiplier), 'Catch-up torque');
+  }
+});
+
+test('Slipstream gives +10% speed only 8–40 m directly behind on the ground', () => {
+  const v = match(), p = v.players[0];
+  for (const [gap, active] of [[79, false], [80, true], [200, true], [400, true], [401, false], [-200, false]]) {
+    v.debug().placePlayer(0, { x: 100 }); v.debug().placePlayer(1, { x: 100 + gap });
+    v.step(DT); assert.equal(p.slipstream, active, 'Slipstream at ' + gap + ' px');
+    const current = Math.max(0, Math.min(1, ((gap + p.startX - v.players[1].startX) / 10 - 20) / 40));
+    near(p.rover.stats.topSpeed, p.base.topSpeed * (1 + .25 * current) * (active ? 1.1 : 1), 'Stacked speed');
+  }
+  v.debug().placePlayer(0, { x: 100, y: 150 }); v.debug().placePlayer(1, { x: 300 }); v.step(DT);
+  assert(!p.slipstream, 'Airborne rover gained slipstream');
 });
 
 test('Item weighting follows current progress after a former leader falls behind', () => {
@@ -94,8 +101,8 @@ test('Same-step finish uses crossing fraction instead of greatest overshoot', ()
 test('A shared-contact shove across the finish line counts on that same step', () => {
   const v = match(); v.matchConfig.target = 500; v.pickups = [];
   const line = v.players[1].startX + 5000;
-  v.debug().placePlayer(0, { x: line - 70 });
   v.debug().placePlayer(1, { x: line - .1 });
+  v.debug().placePlayer(0, { x: line + 15, y: v.players[1].rover.y - 60, vy: 220 });
   v.step(DT);
   assert(v.contacts > 0, 'Fixture needs a real rover contact');
   assert(v.players[1].rover.x >= line, 'Contact must push P2 across the line');
@@ -145,24 +152,21 @@ test('Collected pickups stay gone after old sectors are pruned and regenerated',
   assert(v.pickups.some(item => item.key.startsWith('0:')), 'Uncollected sector pickups should return');
 });
 
-test('An exhausted Pearl Rush rover keeps driving but cannot collect or gain points', () => {
-  const v = match('pearl'), p = v.players[0];
-  v.debug().placePlayer(0, { x: 500, oxygen: 0, pearls: 12 });
-  v.debug().placePlayer(1, { x: 3000, pearls: 100 });
-  const q = { key: 'test:empty', x: p.rover.x, y: p.rover.y, type: 'pearl', collected: false };
-  v.pickups = [q]; const x = p.rover.x;
-  v.keys.add('KeyD'); v.keys.add('KeyW');
-  for (let i = 0; i < 120; i++) v.step(DT);
-  assert(p.rover.x > x + 5, 'Empty Pearl Rush rover stopped driving');
-  assert(p.out); assert.equal(p.rover.oxygen, 0); assert.equal(p.pearls, 12);
-  assert(!q.collected, 'Empty rover collected a pickup');
-  assert.equal(p.rover.cooldown, 0, 'Empty rover fired ballast');
-  v.tick(DT);
-  assert.equal(v.sound.lastState.players[0].running, true, 'Empty Pearl Rush driver lost engine audio');
-  assert.equal(v.sound.lastState.players[0].oxygenFraction, 0);
-  p.item = 'magnet'; p.charges = 1; v.useItem(0);
-  assert.equal(p.pearls, 12, 'Empty rover gained points from a held magnet');
-  assert.equal(v.players[1].pearls, 70, 'Held item stopped working after oxygen depletion');
+test('Race and Pearl Rush oxygen depletion black out at their position and respawn with 60% air', () => {
+  for (const mode of ['race', 'pearl']) {
+    const v = match(mode), p = v.players[0];
+    v.debug().placePlayer(0, { x: 500, pearls: 12 }); v.debug().placePlayer(1, { x: 3000 });
+    assert(v.debug().setOxygen(0, 0)); v.step(DT);
+    assert.equal(p.respawn, 4); assert.equal(p.blackouts, 1); assert.equal(p.crashes, 0); assert(!p.out);
+    const q = { key: 'test:blackout', x: 500, y: p.rover.y, type: 'pearl', collected: false }; v.pickups = [q];
+    v.keys.add('KeyD'); v.keys.add('KeyW');
+    for (let i = 0; i < 479; i++) v.step(DT);
+    assert(p.respawn > 0); near(p.rover.x, 500, 'Blackout location'); assert(!q.collected); assert.equal(p.pearls, 12);
+    v.step(DT); assert.equal(p.respawn, 0); assert.equal(p.blackouts, 1); assert(!p.out);
+    near(p.rover.oxygen, p.rover.maxOxygen * .6, 'Refilled oxygen');
+    assert.equal(p.rover.crashed, ''); assert.equal(v.phase, 'RUNNING');
+    v.endRound(0, 'test'); assert.equal(v.totals[0].blackouts, 1);
+  }
 });
 
 test('Last Sub Standing drains oxygen at 1.5× and has one-third as many tanks', () => {
@@ -178,31 +182,30 @@ test('Last Sub Standing drains oxygen at 1.5× and has one-third as many tanks',
   const tanks = v => v.pickups.filter(q => q.type === 'oxygen').length;
   assert(tanks(survival) > 0);
   assert.equal(tanks(normal), tanks(survival) * 3);
-  survival.players[0].rover.oxygen = 0; survival.step(DT);
-  assert.equal(survival.roundWinner, 1);
+  const p = survival.players[0]; assert.equal(p.lives, 3);
+  for (const lives of [2, 1, 0]) {
+    survival.debug().setOxygen(0, 0); survival.step(DT);
+    assert.equal(p.lives, lives); assert.equal(p.blackouts, 3 - lives);
+    if (lives) { assert(!p.out); assert.equal(p.respawn, 4); for (let i = 0; i < 480; i++) survival.step(DT); near(p.rover.oxygen, p.rover.maxOxygen * .6, 'Life refill'); }
+  }
+  assert(p.out); assert.equal(p.respawn, 0); assert.equal(survival.roundWinner, 1);
   assert.equal(survival.phase, 'ROUND_RESULT');
 });
 
-test('Empty reserves and Pearl Rush timer use the correct score and tie rules', () => {
+test('Simultaneous final survival lives compare distance; Race/Pearl empty air cannot end a round', () => {
   for (const tied of [false, true]) {
-    const race = match();
-    race.players.forEach((p, i) => { p.distance = i && !tied ? 220 : 240; p.rover.oxygen = 0; });
-    race.step(DT);
-    assert.equal(race.roundWinner, tied ? -1 : 0, 'Race depletion should compare furthest distance');
+    const v = match('survival');
+    v.players.forEach((p, i) => { p.lives = 1; p.distance = i && !tied ? 220 : 240; p.rover.oxygen = 0; });
+    v.step(DT); assert.equal(v.roundWinner, tied ? -1 : 0);
+    assert(v.players.every(p => p.out && p.lives === 0));
   }
-  const survival = match('survival');
-  survival.players.forEach(p => { p.rover.oxygen = 0; }); survival.step(DT);
-  assert.equal(survival.roundWinner, -1, 'Simultaneous survival depletion should tie');
-  for (const empty of [false, true]) {
-    const pearl = match('pearl');
-    pearl.players[0].pearls = 20; pearl.players[1].pearls = 45;
-    if (empty) pearl.players.forEach(p => { p.rover.oxygen = 0; });
-    else pearl.time = 90 - DT;
-    pearl.step(DT);
-    assert.equal(pearl.roundWinner, 1, 'Pearl round should compare pearls at timer/depletion');
+  for (const mode of ['race', 'pearl']) {
+    const v = match(mode); v.players.forEach(p => { p.rover.oxygen = 0; }); v.step(DT);
+    assert.equal(v.phase, 'RUNNING'); assert(v.players.every(p => p.respawn > 0 && !p.out));
   }
-  const pearlTie = match('pearl'); pearlTie.time = 90 - DT; pearlTie.step(DT);
-  assert.equal(pearlTie.roundWinner, -1, 'Equal timed pearl scores should tie');
+  const pearl = match('pearl'); pearl.players[0].pearls = 20; pearl.players[1].pearls = 45; pearl.time = 90 - DT;
+  pearl.step(DT); assert.equal(pearl.roundWinner, 1);
+  const pearlTie = match('pearl'); pearlTie.time = 90 - DT; pearlTie.step(DT); assert.equal(pearlTie.roundWinner, -1);
 });
 
 test('Crash respawns once after 2.5 s, charges oxygen, and protects against attacks/contact', () => {
@@ -221,11 +224,41 @@ test('Crash respawns once after 2.5 s, charges oxygen, and protects against atta
   assert(!(p.effects.ink > 0)); assert(p.effects.blocked > 0);
   near(p.effects.spawnShield, 1.5, 'Spawn shield must not be consumed');
   assert.equal(v.totals[1].itemsLanded, 0);
-  v.debug().placePlayer(1, { x: p.rover.x + 40, y: p.rover.y });
+  v.debug().placePlayer(1, { x: p.rover.x + 15, y: p.rover.y - 60, vy: 220 });
   const contacts = v.contacts; v.step(DT);
   assert.equal(v.contacts, contacts, 'Spawn shield failed to suppress rover contact');
   p.effects.spawnShield = 0; v.step(DT);
   assert(v.contacts > contacts, 'Rover contact did not resume after protection');
+});
+
+test('Crash oxygen penalty triggers exactly one blackout and cannot bypass a final survival life', () => {
+  for (const mode of ['race', 'survival']) {
+    const v = match(mode), p = v.players[0]; p.rover.oxygen = 1;
+    if (mode === 'survival') p.lives = 1;
+    assert(v.debug().crashPlayer(0));
+    for (let i = 0; i < 300; i++) v.step(DT);
+    assert.equal(p.crashes, 1); assert.equal(p.blackouts, 1);
+    if (mode === 'survival') { assert.equal(p.lives, 0); assert(p.out); assert.equal(v.roundWinner, 1); }
+    else { assert(!p.out); assert.equal(p.respawn, 4); for (let i = 0; i < 480; i++) v.step(DT); near(p.rover.oxygen, p.rover.maxOxygen * .6, 'Blackout after crash refill'); assert.equal(p.blackouts, 1); }
+  }
+});
+
+test('An oxygen pickup on the depletion step rescues the rover without a crash or blackout', () => {
+  const v = match(), p = v.players[0]; p.rover.oxygen = .001;
+  v.pickups = [{ key: 'test:last-breath', type: 'oxygen', x: p.rover.x, y: p.rover.y, collected: false }];
+  v.step(DT);
+  near(p.rover.oxygen, p.rover.maxOxygen * .6, 'Last-breath pickup');
+  assert.equal(p.rover.crashed, ''); assert.equal(p.crashes, 0); assert.equal(p.blackouts, 0); assert.equal(p.respawn, 0);
+  v.step(DT); assert(p.rover.oxygen > 0 && !p.rover.crashed);
+});
+
+test('A siphon that empties oxygen triggers one blackout on the next fixed step', () => {
+  const v = match(), victim = v.players[1]; victim.rover.oxygen = 20;
+  v.players[0].item = 'siphon'; v.players[0].charges = 1; assert(v.useItem(0));
+  assert.equal(victim.rover.oxygen, 0); v.step(DT);
+  assert.equal(victim.blackouts, 1); assert.equal(victim.respawn, 4); assert.equal(victim.crashes, 0);
+  for (let i = 0; i < 60; i++) v.step(DT);
+  assert.equal(victim.blackouts, 1); assert(!victim.out);
 });
 
 test('An ordinary bubble shield blocks exactly one attack', () => {
@@ -237,6 +270,46 @@ test('An ordinary bubble shield blocks exactly one attack', () => {
   attacker.item = 'net'; attacker.charges = 1; v.useItem(1);
   near(defender.effects.net, 4, 'Second attack should land');
   assert.equal(v.totals[1].itemsLanded, 1);
+});
+
+test('Torpedo instantly crashes, lands one item, explodes, and respawns within 3 s', () => {
+  const v = match(), victim = v.players[1];
+  v.debug().placePlayer(0, { x: 100 }); v.debug().placePlayer(1, { x: 700 });
+  assert(v.debug().fireTorpedo(0)); let n = 0;
+  while (!victim.respawn && n++ < 240) v.step(DT);
+  assert.equal(victim.rover.crashed, 'Torpedoed!'); assert.equal(victim.crashes, 1);
+  assert.equal(victim.respawn, 2.5); assert.equal(v.totals[0].itemsLanded, 1);
+  assert.equal(v.explosions.length, 1); assert(v.flash > 0 && v.shake > 0);
+  assert.equal(v.projectiles.length, 0);
+  for (let i = 0; i < 300; i++) v.step(DT);
+  assert.equal(victim.respawn, 0); assert.equal(victim.rover.crashed, ''); assert.equal(victim.crashes, 1);
+});
+
+test('Torpedo shield block and airborne dodge survive the faster swept projectile', () => {
+  for (const defense of ['shield', 'airborne']) {
+    const v = match(), victim = v.players[1];
+    v.debug().placePlayer(0, { x: 100 }); v.debug().placePlayer(1, { x: 700, ...(defense === 'airborne' ? { y: 100 } : {}) });
+    if (defense === 'shield') victim.effects.shield = 8;
+    v.debug().fireTorpedo(0);
+    for (let i = 0; i < 110; i++) v.step(DT);
+    assert.equal(victim.crashes, 0); assert.equal(victim.respawn, 0); assert.equal(v.totals[0].itemsLanded, 0);
+    if (defense === 'shield') { assert.equal(victim.effects.shield, 0); assert(victim.effects.blocked > 0); }
+    else { assert.equal(v.totals[1].torpedoesDodged, 1); assert(victim.effects.dodged > 0); }
+  }
+});
+
+test('Torpedo speed is 10% above the fastest level-5 vehicle and life remains capped at 12 s', () => {
+  const v = match();
+  for (const vehicle of AR.VEHICLES) {
+    const base = AR.getStats(vehicle.id, Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5])));
+    assert(v.inspect().versus.torpedoSpeed > base.topSpeed);
+  }
+  const fastest = Math.max(...AR.VEHICLES.map(vehicle => AR.getStats(vehicle.id, Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5]))).topSpeed));
+  assert.equal(v.inspect().versus.torpedoSpeed, Math.ceil(fastest * 1.1));
+  v.debug().placePlayer(1, { x: 700, y: -100000 }); v.debug().fireTorpedo(0);
+  assert.equal(v.projectiles[0].life, 12);
+  for (let i = 0; i < 1441; i++) v.updateProjectiles(DT);
+  assert.equal(v.projectiles.length, 0);
 });
 
 console.log('PASS TOTAL: ' + passed + '/' + passed + ' versus logic checks');

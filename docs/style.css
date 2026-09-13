@@ -4,3 +4,5 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 /* The expedition label stays beside the title on desktop; portrait art gets the space. */
 @media(max-width:760px) and (min-height:521px){.expedition-label{display:none}}
+
+.graphics-setting{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:20px 0;color:var(--muted);font-size:13px}.graphics-setting select{padding:9px 12px;border:1px solid var(--line);border-radius:5px;background:#123743;color:var(--ink)}

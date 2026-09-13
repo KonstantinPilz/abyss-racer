@@ -3,6 +3,15 @@
   const AR = root.AR = root.AR || {};
   const DOME_RADIUS = 20, DOME_Y = -18;
   const clamp = function (v, low, high) { return Math.max(low, Math.min(high, v)); };
+  const roverLength = r => r.stats.wheelbase + r.stats.radius * 2;
+  const roverHeight = r => 38 + r.stats.restLength + 8 + r.stats.radius;
+  // A tiny suspension hop should not turn a ground pass into a collision.
+  AR.roverNearGround = r => !r.crashed && r.vy > -80 && r.wheels.some(w =>
+    Math.abs(r.terrain.height(w.x) - w.y - w.radius) < 12);
+  AR.clearRoverGhosting = r => {
+    if (r.ghostWith) { r.ghostWith.ghosting = false; r.ghostWith.ghostWith = null; }
+    r.ghosting = false; r.ghostWith = null;
+  };
 
   function circle(rover, index) {
     if (index < 2) return rover.wheels[index];
@@ -56,6 +65,16 @@
   AR.resolveRoverContacts = function (a, b) {
     const result = { contacts: 0, maxSpeed: 0, hullCrushes: [] };
     if (!a || !b || a === b || a.crashed || b.crashed) return result;
+    const separation = Math.abs(a.x - b.x), length = Math.max(roverLength(a), roverLength(b));
+    if (a.ghostWith === b && b.ghostWith === a) {
+      if (separation <= length * 1.2) return result;
+      AR.clearRoverGhosting(a);
+    }
+    if (separation < length && Math.abs(a.y - b.y) < Math.min(roverHeight(a), roverHeight(b)) * .6 &&
+        AR.roverNearGround(a) && AR.roverNearGround(b)) {
+      a.ghosting = b.ghosting = true; a.ghostWith = b; b.ghostWith = a;
+      return result;
+    }
     const reach = a.stats.wheelbase + b.stats.wheelbase + a.stats.radius + b.stats.radius + 100;
     if (Math.abs(a.x - b.x) > reach || Math.abs(a.y - b.y) > reach) return result;
     let touched = 0;

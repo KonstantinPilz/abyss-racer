@@ -8,12 +8,14 @@
   const TRANSITIONS = { TITLE: ['GARAGE'], GARAGE: ['TITLE', 'RUNNING'], RUNNING: ['PAUSED', 'GAMEOVER'], PAUSED: ['RUNNING', 'GAMEOVER'], GAMEOVER: ['RUNNING', 'GARAGE'] };
   const $ = id => document.getElementById(id);
   const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const writeText = (node, value) => { if (node.textContent !== String(value)) node.textContent = value; };
   const format = value => Math.floor(value).toLocaleString('en-US');
   const stageById = id => AR.STAGES.find(stage => stage.id === id) || AR.STAGES[0];
   const vehicleById = id => AR.VEHICLES.find(vehicle => vehicle.id === id) || AR.VEHICLES[0];
   const save = new AR.Save();
   const sound = new AR.Audio();
   const renderer = new AR.Renderer($('ocean'));
+  renderer.setGraphics(save.data.settings.graphics);
   const keys = new Set();
   let pendingBurst = false;
   const pointers = { throttle: new Set(), brake: new Set(), burst: new Set() };
@@ -353,18 +355,19 @@
     if (!run) return;
     const rover = scene.rover;
     const fraction = clamp(rover.oxygen / rover.maxOxygen, 0, 1);
-    $('distance').innerHTML = format(run.distance) + '<small> m</small>';
-    $('run-stage').textContent = scene.stage.name.toUpperCase();
-    $('run-pearls').textContent = format(run.pearls);
-    $('oxygen-value').textContent = Math.ceil(fraction * 100) + '%';
+    const distanceHTML = format(run.distance) + '<small> m</small>';
+    if ($('distance').innerHTML !== distanceHTML) $('distance').innerHTML = distanceHTML;
+    writeText($('run-stage'), scene.stage.name.toUpperCase());
+    writeText($('run-pearls'), format(run.pearls));
+    writeText($('oxygen-value'), Math.ceil(fraction * 100) + '%');
     $('oxygen-fill').style.width = (fraction * 100) + '%';
     $('oxygen-panel').classList.toggle('low', fraction < .25);
-    $('oxygen-warning').textContent = fraction < .25 ? 'OXYGEN LOW. FIND A TANK!' : 'BREATHE EASY. KEEP EXPLORING.';
-    $('depth').textContent = format(Math.max(0, scene.stage.depth + (rover.y - 350) * .1)) + ' m';
-    $('speed').textContent = Math.round(Math.hypot(rover.vx, rover.vy) * .36) + ' km/h';
+    writeText($('oxygen-warning'), fraction < .25 ? 'OXYGEN LOW. FIND A TANK!' : 'BREATHE EASY. KEEP EXPLORING.');
+    writeText($('depth'), format(Math.max(0, scene.stage.depth + (rover.y - 350) * .1)) + ' m');
+    writeText($('speed'), Math.round(Math.hypot(rover.vx, rover.vy) * .36) + ' km/h');
     const ballast = rover.cooldown > 0 ? rover.cooldown.toFixed(1) + 's' : rover.oxygen <= 8 ? 'LOW O₂' : 'READY';
-    $('ballast-status').textContent = ballast;
-    $('touch-ballast-label').textContent = ballast === 'READY' ? 'BALLAST' : ballast;
+    writeText($('ballast-status'), ballast);
+    writeText($('touch-ballast-label'), ballast === 'READY' ? 'BALLAST' : ballast);
   }
 
   function finishRun(reason) {
@@ -417,7 +420,9 @@
     if (dialogFocus && document.contains(dialogFocus)) dialogFocus.focus({ preventScroll: true });
   }
   function howToPlay() {
-    openDialog('<div class="eyebrow">YOUR FIRST EXPEDITION</div><h2 id="dialog-heading">Get your sea legs.</h2><p>Roll over the seabed, collect pearls, and keep your oxygen topped up. Distance is your score.</p><div class="control-list"><div class="control-row"><span>Throttle / pitch backward in air</span><kbd>→ / D / W</kbd></div><div class="control-row"><span>Brake, reverse / pitch forward</span><kbd>← / A / S</kbd></div><div class="control-row"><span>Ballast burst · upward thrust</span><kbd>SPACE / ↑</kbd></div><div class="control-row"><span>Pause / mute</span><kbd>P / ESC &nbsp; · &nbsp; M</kbd></div></div><div class="help-pickups"><span><b>● Pearls</b> · 5 each<br><b>● Golden pearls</b> · 100</span><span><b>O₂ tanks</b> · refill 60%<br><b>Treasure chests</b> · 75</span></div><p class="help-tip">On a phone, hold the big pedals with both thumbs. Tap ⇧ to rise. Ballast uses 8 O₂ from your reserve, so save a breath for the next tank.</p><p>Ease off the gas over crests. Tap brake in the air to bring the nose down. Finish flips for +100 pearls. Balance your rover before landing: a hard impact on the pilot’s dome ends the dive. Upgrades and new worlds await in the garage.</p>');
+    openDialog('<div class="eyebrow">YOUR FIRST EXPEDITION</div><h2 id="dialog-heading">Get your sea legs.</h2><label class="graphics-setting">Graphics<select id="graphics-setting"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label><p>Roll over the seabed, collect pearls, and keep your oxygen topped up. Distance is your score.</p><div class="control-list"><div class="control-row"><span>Throttle / pitch backward in air</span><kbd>→ / D / W</kbd></div><div class="control-row"><span>Brake, reverse / pitch forward</span><kbd>← / A / S</kbd></div><div class="control-row"><span>Ballast burst · upward thrust</span><kbd>SPACE / ↑</kbd></div><div class="control-row"><span>Pause / mute</span><kbd>P / ESC &nbsp; · &nbsp; M</kbd></div></div><div class="help-pickups"><span><b>● Pearls</b> · 5 each<br><b>● Golden pearls</b> · 100</span><span><b>O₂ tanks</b> · refill 60%<br><b>Treasure chests</b> · 75</span></div><p class="help-tip">On a phone, hold the big pedals with both thumbs. Tap ⇧ to rise. Ballast uses 8 O₂ from your reserve, so save a breath for the next tank.</p><p>Ease off the gas over crests. Tap brake in the air to bring the nose down. Finish flips for +100 pearls. Balance your rover before landing: a hard impact on the pilot’s dome ends the dive. Upgrades and new worlds await in the garage.</p>');
+    $('graphics-setting').value = save.data.settings.graphics;
+    $('graphics-setting').onchange = e => { save.data.settings.graphics = e.target.value; save.save(); renderer.setGraphics(e.target.value); };
   }
 
   $('enter-garage').addEventListener('click', openGarage);
@@ -451,7 +456,7 @@
     if (action === 'reset') {
       openDialog('<div class="eyebrow">A FRESH START</div><h2 id="dialog-heading">Reset your progress?</h2><p>This erases pearls, upgrades, unlocked worlds, records, and achievements from this browser.</p><div class="confirm-actions"><button class="button secondary" id="cancel-reset">KEEP PROGRESS</button><button class="button primary" id="confirm-reset">RESET EVERYTHING</button></div>');
       $('cancel-reset').addEventListener('click', closeDialog);
-      $('confirm-reset').addEventListener('click', () => { save.reset(); sound.setMuted(save.data.settings.muted); closeDialog(); scene = createScene('reef', 'rover'); scene.state = state; renderGarage(); toast('A fresh ocean awaits. Progress reset.'); });
+      $('confirm-reset').addEventListener('click', () => { save.reset(); renderer.setGraphics(save.data.settings.graphics); sound.setMuted(save.data.settings.muted); closeDialog(); scene = createScene('reef', 'rover'); scene.state = state; renderGarage(); toast('A fresh ocean awaits. Progress reset.'); });
       return;
     }
     let changed = false;

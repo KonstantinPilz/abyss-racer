@@ -91,19 +91,23 @@
       dt = clamp(Number(dt) || AR.FIXED_DT, 0, 1 / 30);
       input = input || {};
       this.gravityGrace = Math.max(0, this.gravityGrace - dt);
+      this.geyserFlight = Math.max(0, (this.geyserFlight || 0) - dt);
+      this.naturalGeyser = Math.max(0, (this.naturalGeyser || 0) - dt);
+      this.environment = this.terrain.environment ? this.terrain.environment(this) : {};
+      if (this.environment.plankton) this.oxygen = Math.min(this.maxOxygen, this.oxygen + dt * (1 + (input.throttle ? 1.02 : .85)));
       this.sharkBite = Math.max(0, (this.sharkBite || 0) - dt);
       this.turnGravity(dt);
       this.cooldown = Math.max(0, this.cooldown - dt);
       this.oxygen = Math.max(0, this.oxygen - dt * (input.throttle ? 1.02 : 0.85));
       if (this.oxygen <= 0) { this.crashed = 'Oxygen depleted'; return; }
-      if (input.burst && this.cooldown === 0 && this.oxygen > 8) {
+      if (input.burst && !this.environment.lift && this.cooldown === 0 && this.oxygen > 8) {
         this.oxygen -= 8;
         const direction = this.gravityFlipped ? -1 : 1;
         this.vy -= this.stats.burst * direction;
         this.wheels.forEach((w) => { w.vy -= this.stats.burst * 0.75 * direction; });
         this.cooldown = this.stats.cooldown; this.burstFired = true;
       }
-      if (input.throttle || input.brake || this.burstFired || this.gravityTurn || this.terrain.vent(this.x) > 0) {
+      if (input.throttle || input.brake || this.burstFired || this.gravityTurn || this.environment.current || this.environment.lift || this.terrain.vent(this.x) > 0) {
         this.sleeping = false; this.sleepTime = 0;
       }
       if (this.sleeping) { this.updateContactTimers(dt); return; }
@@ -117,7 +121,7 @@
       this.grounded = this.wheels.some(function (w) { return w.grounded; });
       this.updateContactTimers(dt);
       const quiet = Math.hypot(this.vx, this.vy) < 0.9 && Math.abs(this.omega) < 0.025 && this.wheels.every(function (w) { return w.grounded && Math.hypot(w.vx, w.vy) < 1.2; });
-      if (!input.throttle && !input.brake && quiet) this.sleepTime += dt;
+      if (!input.throttle && !input.brake && !this.environment.current && !this.environment.lift && quiet) this.sleepTime += dt;
       else this.sleepTime = 0;
       // Sleeping is only allowed after both contacts are settled. It removes
       // subpixel suspension chatter while retaining rolling on actual slopes.
@@ -150,11 +154,15 @@
       const c = Math.cos(this.angle), s = Math.sin(this.angle);
       const downX = -s, downY = c;
       const gravity = this.gravity();
+      const env = this.environment || {};
       const vent = this.terrain.vent(this.x);
+      const lift = env.lift ? env.lift * (input.burst ? 2 : 1) : 0;
+      const current = env.current || 0;
+      const slow = env.mud ? .5 : 1;
       const ventReach = clamp(1 - Math.max(0, this.terrain.height(this.x) - this.y - 70) / 260, 0, 1);
       const speed = Math.hypot(this.vx, this.vy);
-      let forceX = -this.mass * this.vx * (0.055 + speed * 0.00014);
-      let forceY = this.mass * (gravity - vent * ventReach - this.vy * (stats.id === 'manta' && this.vy > 0 ? 1.35 : 0.43));
+      let forceX = this.mass * current - this.mass * this.vx * (0.055 + speed * 0.00014);
+      let forceY = this.mass * (gravity - lift - vent * ventReach - this.vy * (stats.id === 'manta' && this.vy > 0 ? 1.35 : (this.geyserFlight > 0 && this.vy < 0 ? 2.2 : 0.43)));
       let torque = -this.omega * this.inertia * (this.grounded ? 1.3 : 0.62);
       const control = (input.throttle ? 1 : 0) - (input.brake ? 1 : 0);
       const orientation = this.gravityFlipped ? -1 : 1;
@@ -182,16 +190,16 @@
         const rate = relativeX * downX + relativeY * downY;
         const springForce = clamp(stats.spring * (stats.restLength - length) - stats.damping * rate, -this.mass * 3500, this.mass * 3500);
         const fx = springForce * downX, fy = springForce * downY;
-        w.vx += (fx / this.wheelMass - w.vx * 0.075 + jetAcceleration) * dt;
+        w.vx += (fx / this.wheelMass - w.vx * 0.075 + jetAcceleration + current) * dt;
         // Apply the same vent acceleration to the chassis and both wheels so
         // the updraft cannot create differential lift or pitch the suspension.
-        w.vy += (fy / this.wheelMass + gravity - vent * ventReach - w.vy * 0.16) * dt;
+        w.vy += (fy / this.wheelMass + gravity - lift - vent * ventReach - w.vy * (this.geyserFlight > 0 && w.vy < 0 ? 1.8 : .16)) * dt;
         forceX -= fx; forceY -= fy;
         torque -= rx * fy - ry * fx;
         if (control) {
           const wheelSpeed = w.omega * w.radius * orientation;
-          const target = control > 0 ? stats.topSpeed : -stats.topSpeed * 0.42;
-          let drive = stats.torque * control * clamp(1 - wheelSpeed / target, 0, 1.6);
+          const target = (control > 0 ? stats.topSpeed : -stats.topSpeed * 0.42) * slow;
+          let drive = stats.torque * slow * control * clamp(1 - wheelSpeed / target, 0, 1.6);
           // Braking gets immediate grip before engaging reverse.
           if (input.brake && wheelSpeed > 12) drive = -stats.torque * 1.45;
           drive *= orientation;

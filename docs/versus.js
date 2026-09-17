@@ -5,13 +5,14 @@
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const writeText = (node, value) => { const text = String(value); if (node.textContent !== text) node.textContent = text; };
   const fmt = n => Math.floor(n).toLocaleString('en-US');
-  const MODES = { race: 'Race', survival: 'Last Sub Standing', pearl: 'Pearl Rush', arena: 'Bubble Battle' };
+  const MODES = { race: 'Race', survival: 'Last Sub Standing', pearl: 'Pearl Rush', arena: 'Bubble Battle', treasure: 'Treasure Tug' };
   const ITEMS = {
     ink: { name: 'Ink Cloud', icon: '●', description: 'Black out their view for 3.5 s.' },
     torpedo: { name: 'Torpedo', icon: '➤', description: 'Instant crash on hit. Jump to dodge!' },
-    net: { name: 'Jellyfish Net', icon: '♧', description: 'Tangle their engine for 4 s.' },
+    net: { name: 'Jellyfish Net', icon: '♧', description: 'Half throttle and top speed for 4 s.' },
+    geyser: { name: 'Geyser', icon: '♨', description: 'A 0.3 s rumble, then launch your rival! Shield blocks it.' },
     siphon: { name: 'Oxygen Siphon', icon: 'O₂', description: 'Steal up to 25 oxygen.' },
-    riptide: { name: 'Riptide', icon: '⇄', description: 'Reverse their drive controls for 4 s.' },
+    riptide: { name: 'Riptide', icon: '⇄', description: 'Reverse their drive controls for 5 s.' },
     shield: { name: 'Bubble Shield', icon: '◉', description: 'Block one attack. Lasts 8 s.' },
     turbo: { name: 'Turbo Current', icon: '»', description: 'Extra torque and speed for 3 s.' },
     magnet: { name: 'Pearl Magnet', icon: '∩', description: 'Steal 30% of their round pearls.' },
@@ -54,20 +55,21 @@
     constructor(save, sound, renderer, exit) {
       this.save = save; this.sound = sound; this.renderer = renderer; this.exit = exit;
       this.active = false; this.phase = 'SETUP'; this.keys = new Set(); this.pendingBurst = [false, false]; this.players = [];
-      this.config = { mode: 'race', target: 500, bestOf: 3, stage: 'reef', vehicles: ['rover', 'rover'] };
+      this.config = { mode: 'race', target: 500, bestOf: 3, carryTarget: 30, stage: 'reef', vehicles: ['rover', 'rover'] };
       this.ready = [false, false]; this.scores = [0, 0]; this.cameras = [{}, {}];
       this.frames = 0; this.frameSeconds = 0;
       this.buildUI();
     }
     buildUI() {
       const root = document.createElement('div'); root.id = 'versus-root'; root.hidden = true;
-      root.innerHTML = '<section id="versus-setup" class="v-setup"><div class="v-heading"><div><div class="eyebrow">ONE KEYBOARD · TWO RIVALS</div><h2>Friends above.<br><span>Rivals below.</span></h2></div><button id="versus-title" class="button secondary">← Title</button></div><div id="versus-tally" class="v-tally"></div><div class="v-pilots">' + [0, 1].map(i => '<article class="v-pilot p' + (i + 1) + '"><div class="v-card-heading"><b>PLAYER ' + (i + 1) + '</b><span>' + (i ? 'BOTTOM VIEW' : 'TOP VIEW') + '</span></div><div class="v-vehicle-select"><button data-cycle="' + i + ':-1" aria-label="Previous vehicle for Player ' + (i + 1) + '">‹</button><canvas id="versus-vehicle-' + i + '"></canvas><button data-cycle="' + i + ':1" aria-label="Next vehicle for Player ' + (i + 1) + '">›</button></div><h3 id="versus-name-' + i + '"></h3><p id="versus-desc-' + i + '"></p><div class="v-controls">' + (i ? '<kbd>←</kbd> Brake <kbd>→</kbd> Drive <kbd>↑</kbd> Ballast <kbd>↓</kbd> Item' : '<kbd>A</kbd> Brake <kbd>D</kbd> Drive <kbd>W</kbd> Ballast <kbd>S</kbd> Item') + '</div><button id="versus-ready-' + i + '" class="button secondary">' + (i ? '↓' : 'S') + ' · READY</button></article>').join('') + '</div><div class="v-options"><label>ROUND MODE<select id="versus-mode"><option value="race">Race</option><option value="survival">Last Sub Standing</option><option value="pearl">Pearl Rush · 90 seconds</option><option value="arena">Bubble Battle · 3 hits</option></select></label><label>RACE DISTANCE<select id="versus-target"><option value="500">500 m</option><option value="1000">1,000 m</option><option value="2000">2,000 m</option></select></label><label>ROUNDS<select id="versus-rounds"><option value="1">One round</option><option value="3" selected>Best of 3</option><option value="5">Best of 5</option></select></label><label>OCEAN<select id="versus-stage">' + AR.STAGES.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('') + '</select></label><label>GRAPHICS<select id="versus-graphics"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label></div><p id="versus-mode-note" class="v-mode-note"></p><div class="v-launch"><p>All 5 rides & 6 oceans unlocked here.<br>Equal level-5 tune. Bragging rights earned.</p><button id="versus-start" class="button primary">DIVE TOGETHER <span>↗</span></button></div><p class="v-setup-help">Choose rides with A / D and ← / →, then S and ↓ to ready up. Both ready starts the match. Esc / P pauses.</p></section><div id="versus-huds" hidden>' + [0, 1].map(i => '<section class="v-hud p' + (i + 1) + '" id="v-hud-' + i + '" aria-label="Player ' + (i + 1) + ' instruments"><div class="v-hud-row"><div class="v-identity"><b>P' + (i + 1) + '</b><strong id="v-distance-' + i + '">0 m</strong><small id="v-progress-' + i + '"></small></div><div class="v-oxygen"><span>O₂ <b id="v-oxygen-' + i + '"></b></span><div><i id="v-oxygen-fill-' + i + '"></i></div><small class="v-lives" id="v-lives-' + i + '" hidden></small></div><div class="v-counts"><b id="v-pearls-' + i + '"></b><span id="v-crashes-' + i + '"></span></div><div class="v-item" id="v-item-' + i + '"><b id="v-icon-' + i + '">?</b><span id="v-item-name-' + i + '">Find a crate</span><kbd>' + (i ? '↓' : 'S') + '</kbd></div></div><div class="v-status" id="v-status-' + i + '"></div><div class="v-toast" id="v-toast-' + i + '" role="status"></div><div class="v-respawn" id="v-respawn-' + i + '"></div><div class="v-bottom"><span>' + (i ? '← BRAKE　→ DRIVE　↑ BALLAST　↓ ITEM' : 'A BRAKE　D DRIVE　W BALLAST　S ITEM') + '</span><span id="v-ballast-' + i + '"></span><span>P / ESC PAUSE</span></div></section>').join('') + '<div class="v-divider"></div><button id="versus-pause" aria-label="Pause versus">Ⅱ</button></div><section id="versus-overlay" class="v-overlay" hidden><div class="v-result" id="versus-overlay-content"></div></section>';
+      root.innerHTML = '<section id="versus-setup" class="v-setup"><div class="v-heading"><div><div class="eyebrow">ONE KEYBOARD · TWO RIVALS</div><h2>Friends above.<br><span>Rivals below.</span></h2></div><button id="versus-title" class="button secondary">← Title</button></div><div id="versus-tally" class="v-tally"></div><div class="v-pilots">' + [0, 1].map(i => '<article class="v-pilot p' + (i + 1) + '"><div class="v-card-heading"><b>PLAYER ' + (i + 1) + '</b><span>' + (i ? 'BOTTOM VIEW' : 'TOP VIEW') + '</span></div><div class="v-vehicle-select"><button data-cycle="' + i + ':-1" aria-label="Previous vehicle for Player ' + (i + 1) + '">‹</button><canvas id="versus-vehicle-' + i + '"></canvas><button data-cycle="' + i + ':1" aria-label="Next vehicle for Player ' + (i + 1) + '">›</button></div><h3 id="versus-name-' + i + '"></h3><p id="versus-desc-' + i + '"></p><div class="v-controls">' + (i ? '<kbd>←</kbd> Brake <kbd>→</kbd> Drive <kbd>↑</kbd> Ballast <kbd>↓</kbd> Item' : '<kbd>A</kbd> Brake <kbd>D</kbd> Drive <kbd>W</kbd> Ballast <kbd>S</kbd> Item') + '</div><button id="versus-ready-' + i + '" class="button secondary">' + (i ? '↓' : 'S') + ' · READY</button></article>').join('') + '</div><div class="v-options"><label>ROUND MODE<select id="versus-mode"><option value="race">Race</option><option value="survival">Last Sub Standing</option><option value="pearl">Pearl Rush · 90 seconds</option><option value="arena">Bubble Battle · 3 hits</option><option value="treasure">Treasure Tug · carry the chest</option></select></label><label>RACE DISTANCE<select id="versus-target"><option value="500">500 m</option><option value="1000">1,000 m</option><option value="2000">2,000 m</option></select></label><label>CARRY TO WIN<select id="versus-carry"><option value="20">20 seconds</option><option value="30" selected>30 seconds</option><option value="45">45 seconds</option></select></label><label>ROUNDS<select id="versus-rounds"><option value="1">One round</option><option value="3" selected>Best of 3</option><option value="5">Best of 5</option></select></label><label>OCEAN<select id="versus-stage">' + AR.STAGES.map(s => '<option value="' + s.id + '">' + s.name + '</option>').join('') + '</select></label><label>GRAPHICS<select id="versus-graphics"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label></div><p id="versus-mode-note" class="v-mode-note"></p><div class="v-launch"><p>All 5 rides & 9 oceans unlocked here.<br>Equal level-5 tune. Bragging rights earned.</p><button id="versus-start" class="button primary">DIVE TOGETHER <span>↗</span></button></div><p class="v-setup-help">Choose rides with A / D and ← / →, then S and ↓ to ready up. Both ready starts the match. Esc / P pauses.</p></section><div id="versus-huds" hidden>' + [0, 1].map(i => '<section class="v-hud p' + (i + 1) + '" id="v-hud-' + i + '" aria-label="Player ' + (i + 1) + ' instruments"><div class="v-hud-row"><div class="v-identity"><b>P' + (i + 1) + '</b><strong id="v-distance-' + i + '">0 m</strong><small id="v-progress-' + i + '"></small></div><div class="v-oxygen"><span>O₂ <b id="v-oxygen-' + i + '"></b></span><div><i id="v-oxygen-fill-' + i + '"></i></div><small class="v-lives" id="v-lives-' + i + '" hidden></small></div><div class="v-counts"><b id="v-pearls-' + i + '"></b><span id="v-crashes-' + i + '"></span></div><div class="v-item" id="v-item-' + i + '"><b id="v-icon-' + i + '">?</b><span id="v-item-name-' + i + '">Find a crate</span><kbd>' + (i ? '↓' : 'S') + '</kbd></div></div><div class="v-status" id="v-status-' + i + '"></div><div class="v-toast" id="v-toast-' + i + '" role="status"></div><div class="v-respawn" id="v-respawn-' + i + '"></div><div class="v-bottom"><span>' + (i ? '← BRAKE　→ DRIVE　↑ BALLAST　↓ ITEM' : 'A BRAKE　D DRIVE　W BALLAST　S ITEM') + '</span><span id="v-ballast-' + i + '"></span><span>P / ESC PAUSE</span></div></section>').join('') + '<div class="v-divider"></div><button id="versus-pause" aria-label="Pause versus">Ⅱ</button></div><section id="versus-overlay" class="v-overlay" hidden><div class="v-result" id="versus-overlay-content"></div></section>';
       document.body.appendChild(root);
+      for (let i = 0; i < 2; i++) $('v-hud-' + i).insertAdjacentHTML('beforeend', '<div class="v-reversed" id="v-reversed-' + i + '" hidden><b>⟳</b> CONTROLS REVERSED <span></span></div><div class="v-treasure" id="v-treasure-' + i + '" hidden><div></div><meter min="-45" max="45" value="0" aria-label="Carry time advantage"></meter></div>');
       $('versus-title').onclick = () => this.close();
       root.querySelectorAll('[data-cycle]').forEach(b => { b.onclick = () => { const [i, dir] = b.dataset.cycle.split(':').map(Number); this.cycle(i, dir); }; });
       [0, 1].forEach(i => { $('versus-ready-' + i).onclick = () => this.confirm(i); });
-      for (const [id, key] of [['mode', 'mode'], ['target', 'target'], ['rounds', 'bestOf'], ['stage', 'stage']]) {
-        $('versus-' + id).onchange = e => { this.config[key] = ['target', 'bestOf'].includes(key) ? Number(e.target.value) : e.target.value; this.ready = [false, false]; this.setupUI(); };
+      for (const [id, key] of [['mode', 'mode'], ['target', 'target'], ['rounds', 'bestOf'], ['carry', 'carryTarget'], ['stage', 'stage']]) {
+        $('versus-' + id).onchange = e => { this.config[key] = ['target', 'bestOf', 'carryTarget'].includes(key) ? Number(e.target.value) : e.target.value; this.ready = [false, false]; this.setupUI(); };
       }
       $('versus-graphics').onchange = e => { this.save.data.settings.graphics = e.target.value; this.save.save(); this.renderer.setGraphics(e.target.value); };
       $('versus-start').onclick = () => this.startMatch();
@@ -101,8 +103,9 @@
         $('versus-ready-' + i).textContent = this.ready[i] ? '✓ READY TO DIVE' : (i ? '↓' : 'S') + ' · READY';
         $('versus-ready-' + i).classList.toggle('ready', this.ready[i]);
       }
+      $('versus-carry').disabled = this.config.mode !== 'treasure';
       $('versus-target').disabled = this.config.mode !== 'race';
-      $('versus-mode-note').textContent = { race: 'First to ' + fmt(this.config.target) + ' m wins. Crash, respawn, settle the score.', survival: 'Three O₂ lives each. Black out, respawn in 4 s with 60% air. Last player with a life wins; oxygen drains 1.5× faster and tanks are scarce.', pearl: '90 seconds. Shared pearls: first to grab gets them. Most pearls wins.', arena: 'Three hull hits and you’re out! Item fires a slow bubble in your last drive direction. Ballast jumps recharge in 1 s and use no oxygen. Most hull after 120 s wins; ties replay.' }[this.config.mode];
+      $('versus-mode-note').textContent = { treasure: 'Carry one shared chest for ' + (this.config.carryTarget || 30) + ' seconds. Carrier speed −12%. Hits and hard landings drop it; steal it back! At a 300 m gap the chest returns between you.', race: 'First to ' + fmt(this.config.target) + ' m wins. Crash, respawn, settle the score.', survival: 'Three O₂ lives each. Black out, respawn in 4 s with 60% air. Last player with a life wins; oxygen drains 1.5× faster and tanks are scarce.', pearl: '90 seconds. Shared pearls: first to grab gets them. Most pearls wins.', arena: 'Three hull hits and you’re out! Item fires a slow bubble in your last drive direction. Ballast jumps recharge in 1 s and use no oxygen. Most hull after 120 s wins; ties replay.' }[this.config.mode];
     }
     cycle(i, dir) {
       const n = AR.VEHICLES.findIndex(v => v.id === this.config.vehicles[i]);
@@ -151,7 +154,7 @@
       if (this.network && !this.network.starting) return this.network.start();
       this.sound.unlock(); this.matchConfig = { ...this.config, vehicles: [...this.config.vehicles] };
       this.scores = [0, 0]; this.round = 1; this.matchSaved = false;
-      this.totals = [0, 1].map(() => ({ bestDistance: 0, itemsLanded: 0, crashes: 0, torpedoesDodged: 0, blackouts: 0, itemsUsed: 0, pearls: 0 }));
+      this.totals = [0, 1].map(() => ({ bestDistance: 0, itemsLanded: 0, crashes: 0, torpedoesDodged: 0, blackouts: 0, itemsUsed: 0, pearls: 0, carryTime: 0, steals: 0 }));
       this.frames = 0; this.frameSeconds = 0; this.newRound();
     }
     spawn(p, x) {
@@ -169,7 +172,7 @@
       this.players = c.vehicles.map((id, index) => {
         const base = AR.getStats(id, Object.fromEntries(AR.UPGRADES.map(u => [u.id, 5])));
         if (index) base.color = id === 'bike' ? '#609cf1' : '#56dce9';
-        const p = { index, base, effects: {}, distance: 0, maxX: 0, pearls: 0, crashes: 0, blackouts: 0, lives: 3, respawnKind: '', itemsUsed: 0, item: null, charges: 0, respawn: 0, out: false, catchup: false, slipstream: false, catchupWait: 0, catchupCooldown: 0, toast: '', toastTime: 0 };
+        const p = { index, base, effects: {}, carryTime: 0, steals: 0, distance: 0, maxX: 0, pearls: 0, crashes: 0, blackouts: 0, lives: 3, respawnKind: '', itemsUsed: 0, item: null, charges: 0, respawn: 0, out: false, catchup: false, slipstream: false, catchupWait: 0, catchupCooldown: 0, toast: '', toastTime: 0 };
         const rightGrid = (index + this.round) % 2;
         const x = c.mode === 'arena' ? (rightGrid ? 1440 : 360) : rightGrid ? 100 : -40;
         p.facing = c.mode === 'arena' && rightGrid ? -1 : 1;
@@ -177,7 +180,11 @@
         return p;
       });
       this.pickups = []; this.projectiles = []; this.projectileSeq = 0; this.explosions = []; this.shake = 0; this.flash = 0; this.generated = new Set(); this.collected = new Set(); this.crateCooldowns = new Map(); this.contacts = 0; this.time = 0; this.remaining = c.mode === 'arena' ? 120 : 90;
-      this.hazards = c.mode !== 'arena' && AR.WorldHazards ? new AR.WorldHazards(this.terrain) : null;
+      this.hazards = c.mode !== 'arena' && AR.WorldHazards ? new AR.WorldHazards(this.terrain, (r, q) => this.sharkHit(r, q)) : null;
+      this.terrain.onCollapse = (id, at) => { if (this.network) this.network.event('collapse', { bridge: id, at }); };
+      this.terrain.onGeyser = r => { const p = this.players.find(p => p.rover === r); if (p) { this.dropChest(p); p.effects.geyser = .9; p.geyserX = r.x; p.geyserY = this.terrain.height(r.x); this.sound.play('geyser'); } };
+      const chestX = (this.players[0].rover.x + this.players[1].rover.x) / 2;
+      this.chest = c.mode === 'treasure' ? { x: chestX, y: this.terrain.height(chestX) - 16, vx: 0, vy: 0, carrier: -1, previous: -1, lock: 0, lastTeleport: -10 } : null;
       this.cameras = [{}, {}]; this.accumulator = 0; this.clearKeys(); this.phase = 'COUNTDOWN'; this.phaseTime = 4; this.lastCount = null;
       this.generatePickups(); this.show(); this.hud();
       if (this.network) this.network.roundStarted();
@@ -222,6 +229,8 @@
       const table = gap >= 60 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'turbo', 'turbo', 'net', 'net'] :
         gap >= 20 ? ['torpedo', 'torpedo', 'torpedo', 'turbo', 'turbo', 'turbo', 'net', 'net', 'ink', 'magnet'] :
         gap > 0 ? ['torpedo', 'torpedo', 'ink', 'net', 'siphon', 'riptide', 'turbo', 'magnet', 'shield', 'gravity', 'jet'] : ['shield', 'shield', 'turbo', 'turbo', 'anchor', 'ink', 'net', 'gravity', 'jet'];
+      table.push('geyser');
+      if (gap > 0) table.push('riptide', 'riptide');
       const id = table[Math.floor(Math.random() * table.length)];
       return id === 'magnet' && this.matchConfig.mode !== 'pearl' ? 'turbo' : id;
     }
@@ -301,10 +310,11 @@
       } else if (!this.blocked(v, p, id)) {
         if (id === 'ink') v.effects.ink = 3.5;
         if (id === 'net') v.effects.net = 4;
-        if (id === 'riptide') v.effects.riptide = 4;
+        if (id === 'riptide') v.effects.riptide = 5;
+        if (id === 'geyser') { v.effects.geyserWarning = .3; v.geyserOwner = p.index; }
         if (id === 'siphon') { const amount = Math.min(25, v.rover.oxygen); v.rover.oxygen -= amount; p.rover.oxygen = Math.min(p.rover.maxOxygen, p.rover.oxygen + amount); v.effects.siphon = 1.5; p.effects.siphonGain = 1.5; }
         if (id === 'magnet') { const amount = Math.floor(v.pearls * .3); v.pearls -= amount; if (!p.out) p.pearls += amount; v.effects.magnet = 1.5; p.effects.magnetGain = 1.5; }
-        this.landed(p, v, id);
+        if (id !== 'geyser') this.landed(p, v, id);
       }
       this.hud(); return true;
     }
@@ -391,8 +401,71 @@
       }
       this.projectiles = this.projectiles.filter(q => q.life > 0);
     }
+    sharkHit(r, q) {
+      const p = this.players.find(p => p.rover === r);
+      if (!p || p.out || p.respawn) return true;
+      if (p.effects.spawnShield > 0 || p.effects.shield > 0) {
+        if (!(p.effects.spawnShield > 0)) p.effects.shield = 0;
+        p.effects.blocked = .8; this.sound.play('shield'); return true;
+      }
+      if (q.fish) { kick(r, q.direction * 55, -22); p.effects.fish = .6; this.toast('A little fish traffic!'); }
+      else { r.crashed = 'Shark bite'; this.crash(p); p.effects.hit = 1; p.effects.shark = 1; this.toast('Shark bite! Ballast or brake at the warning.'); }
+      return true;
+    }
+    erupt(p) {
+      if (p.out || p.respawn) return;
+      const attacker = this.players[p.geyserOwner];
+      if (this.blocked(p, attacker, 'geyser')) return;
+      const r = p.rover;
+      p.geyserX = r.x; p.geyserY = this.terrain.height(r.x);
+      AR.launchGeyser(r, AR.roverNearGround(r) ? 1 : .6);
+      p.effects.geyser = .9; this.dropChest(p); this.sound.play('geyser'); this.landed(attacker, p, 'geyser');
+    }
+    dropChest(p) {
+      const c = this.chest;
+      if (!c || c.carrier !== p.index) return;
+      const opponent = this.players[1 - p.index];
+      c.carrier = -1; c.previous = p.index; c.lock = 1;
+      c.x = p.rover.x + (Math.sign(opponent.rover.x - p.rover.x) || 1) * 48;
+      c.y = p.rover.y + 12; c.vx = (Math.sign(opponent.rover.x - p.rover.x) || 1) * 105; c.vy = -100;
+      this.toast('Chest dropped! Grab the treasure.');
+      if (this.network) this.network.event('chest', { chest: { ...c } });
+    }
+    updateChest(dt) {
+      const c = this.chest; if (!c) return;
+      c.lock = Math.max(0, c.lock - dt);
+      const [a, b] = this.players;
+      if (Math.abs(a.rover.x - b.rover.x) > 3000 && this.time - c.lastTeleport >= 1) {
+        c.previous = c.carrier >= 0 ? c.carrier : c.previous; c.carrier = -1; c.lock = 1;
+        c.x = (a.rover.x + b.rover.x) / 2; c.y = this.terrain.height(c.x) - 16; c.vx = c.vy = 0;
+        if (this.time - c.lastTeleport > 1.5) this.toast('Too far apart! Chest returned to the midpoint.');
+        c.lastTeleport = this.time;
+        if (this.network) this.network.event('chest', { chest: { ...c } });
+        return;
+      }
+      if (c.carrier >= 0) {
+        const p = this.players[c.carrier];
+        if (p.respawn || p.out || p.rover.crashed) { this.dropChest(p); return; }
+        c.x = p.rover.x; c.y = p.rover.y + 38;
+        p.carryTime = Math.min(this.matchConfig.carryTarget || 30, p.carryTime + dt);
+        if (p.carryTime >= (this.matchConfig.carryTarget || 30) - 1e-8) this.endRound(p.index, 'Treasure Tug · carry target reached');
+        return;
+      }
+      c.vy += 180 * dt; c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= Math.exp(-dt * 1.8);
+      const floor = this.terrain.height(c.x) - 16;
+      if (c.y > floor) { c.y = floor; c.vy = Math.abs(c.vy) < 25 ? 0 : -c.vy * .35; }
+      const candidates = this.players.filter(p => !p.out && !p.respawn && !p.rover.crashed && !(c.previous === p.index && c.lock > 0) && segmentDistance(c.x, c.y, p.rover.prev.x, p.rover.prev.y, p.rover.x, p.rover.y) < 60);
+      candidates.sort((a, b) => Math.hypot(a.rover.x - c.x, a.rover.y - c.y) - Math.hypot(b.rover.x - c.x, b.rover.y - c.y) || (a.index + this.round) % 2 - (b.index + this.round) % 2);
+      if (candidates.length) {
+        const p = candidates[0]; if (c.previous >= 0 && c.previous !== p.index) p.steals++;
+        c.carrier = p.index; c.x = p.rover.x; c.y = p.rover.y + 38; c.vx = c.vy = 0;
+        this.toast('P' + (p.index + 1) + ' has the treasure!'); this.sound.play('chest');
+        if (this.network) this.network.event('chest', { chest: { ...c } });
+      }
+    }
     crash(p) {
       if (p.respawn || p.out) return;
+      this.dropChest(p);
       if (this.matchConfig.mode === 'arena') { p.crashes++; this.arenaHit(p, p.rover.crashed || 'Hull impact'); this.sound.play('crash'); return; }
       AR.clearRoverGhosting(p.rover);
       p.crashes++; p.respawn = 2.5; p.respawnKind = 'crash'; p.crashX = p.rover.x; p.crashReason = p.rover.crashed || 'Hull crushed';
@@ -401,6 +474,7 @@
     }
     blackout(p) {
       if (p.respawnKind === 'blackout' || p.out) return;
+      this.dropChest(p);
       AR.clearRoverGhosting(p.rover);
       p.blackouts++; p.crashX = p.rover.x; p.crashReason = 'Out of air'; p.respawnKind = 'blackout';
       p.rover.oxygen = 0; p.rover.crashed = 'Out of air'; p.item = null; p.charges = 0; p.effects = {};
@@ -420,6 +494,7 @@
       this.explosions = this.explosions.filter(e => e.life > 0);
       const c = this.matchConfig;
       const arena = c.mode === 'arena';
+      this.terrain.stepWorld(this.players.filter(p => !p.respawn && !p.out).map(p => p.rover), dt);
       const beforeDistances = this.players.map(p => p.distance);
       // Snapshot shared positions before either physics step, so both boosts use
       // the same instant rather than depending on player update order.
@@ -428,7 +503,9 @@
       const positions = this.players.map(p => ({ x: p.rover.x, y: p.rover.y }));
       for (const p of this.players) {
         p.toastTime = Math.max(0, p.toastTime - dt);
+        const rumbling = p.effects.geyserWarning > 0;
         for (const key of Object.keys(p.effects)) p.effects[key] = Math.max(0, p.effects[key] - dt);
+        if (rumbling && p.effects.geyserWarning <= 1e-8) this.erupt(p);
         if (p.out) { p.rover.savePrevious(); continue; }
         if (arena) p.rover.oxygen = p.rover.maxOxygen;
         if (p.rover.oxygen <= 0 && !p.respawn) { this.blackout(p); p.rover.savePrevious(); continue; }
@@ -455,10 +532,10 @@
         if (input.throttle !== input.brake) p.facing = input.throttle ? 1 : -1;
         r.setGravityFlipped(effect.gravity > 0);
         r.jetThrust = effect.jet > 0 ? 240 : 0;
-        r.stats.torque = p.base.torque * (effect.turbo > 0 ? 1.6 : 1) * (effect.net > 0 ? .35 : 1) * (1 + .15 * current);
-        r.stats.topSpeed = p.base.topSpeed * (effect.turbo > 0 ? 1.4 : 1) * (1 + .25 * current) * (p.slipstream ? 1.1 : 1);
-        r.stats.thrustLevel = effect.net > 0 ? 0 : p.base.thrustLevel;
-        if (effect.net > 0) { const drag = Math.exp(-dt * 2.4); r.vx *= drag; r.wheels.forEach(w => { w.vx *= drag; w.omega *= drag; }); }
+        r.stats.torque = p.base.torque * (effect.turbo > 0 ? 1.6 : 1) * (effect.net > 0 ? .5 : 1) * (1 + .15 * current);
+        r.stats.topSpeed = p.base.topSpeed * (effect.turbo > 0 ? 1.4 : 1) * (1 + .25 * current) * (p.slipstream ? 1.1 : 1) * (effect.net > 0 ? .5 : 1) * (this.chest?.carrier === p.index ? .88 : 1);
+        r.stats.thrustLevel = p.base.thrustLevel;
+        if (effect.net > 0) { const drag = Math.exp(-dt * .08); r.vx *= drag; r.wheels.forEach(w => { w.vx *= drag; w.omega *= drag; }); }
         if (arena) {
           if (input.burst && !(effect.jumpCooldown > 0) && AR.roverNearGround(r)) { kick(r, 0, -270); effect.jumpCooldown = 1; this.sound.play('burst'); }
           input.burst = false;
@@ -473,6 +550,10 @@
       if (this.players.every(p => !p.out && !p.respawn && !(p.effects.spawnShield > 0))) {
         const result = AR.resolveRoverContacts(this.players[0].rover, this.players[1].rover);
         this.contacts += result.contacts;
+        if (this.chest?.carrier >= 0 && result.maxSpeed > 70) {
+          const carrier = this.players[this.chest.carrier], other = this.players[1 - carrier.index];
+          if (other.rover.prev.y < carrier.rover.prev.y - 22) this.dropChest(carrier);
+        }
       }
       if (arena) for (const p of this.players) if (!p.out && !p.respawn) this.boundArena(p.rover);
       // Distance includes the final shared-contact position, including a landing shove across the line.
@@ -484,6 +565,8 @@
         else if (p.rover.crashed === 'Oxygen depleted') p.rover.crashed = '';
         else if (p.rover.crashed) this.crash(p);
       }
+      this.updateChest(dt);
+      if (this.phase !== 'RUNNING') return;
       if (Math.floor(this.time * 4) !== Math.floor((this.time - dt) * 4)) this.generatePickups();
       const alive = this.players.filter(p => !p.out);
       if (c.mode === 'race') {
@@ -507,7 +590,7 @@
       this.roundWinner = winner; this.roundReason = reason;
       if (winner >= 0) this.scores[winner]++;
       for (const p of this.players) {
-        const t = this.totals[p.index]; t.bestDistance = Math.max(t.bestDistance, p.distance); t.crashes += p.crashes; t.blackouts += p.blackouts; t.itemsUsed += p.itemsUsed; t.pearls += p.pearls;
+        const t = this.totals[p.index]; t.bestDistance = Math.max(t.bestDistance, p.distance); t.crashes += p.crashes; t.blackouts += p.blackouts; t.itemsUsed += p.itemsUsed; t.pearls += p.pearls; t.carryTime += p.carryTime; t.steals += p.steals;
       }
       this.phase = 'ROUND_RESULT'; this.phaseTime = 3; this.accumulator = 0; this.clearKeys(); this.sound.suspend(); this.sound.play('trick'); this.show(); this.resultUI(false);
     }
@@ -521,7 +604,7 @@
       const title = winner < 0 ? 'A DEAD HEAT!' : 'PLAYER ' + (winner + 1) + (match ? ' WINS' : ' TAKES THE ROUND');
       const cards = [0, 1].map(i => {
         const p = this.players[i], t = this.totals[i];
-        const stats = this.matchConfig.mode === 'arena' ? (match ? [['HITS LANDED', t.itemsLanded], ['SHOTS FIRED', t.itemsUsed], ['BUBBLES DODGED', t.torpedoesDodged], ['HULL CRASHES', t.crashes]] : [['HULL LEFT', p.lives + ' / 3'], ['SHOTS FIRED', p.itemsUsed], ['HULL CRASHES', p.crashes]]) : match ? [['BEST DISTANCE', fmt(t.bestDistance) + ' m'], ['ITEMS LANDED', t.itemsLanded], ['CRASHES', t.crashes], ['BLACKOUTS', t.blackouts], ['TORPEDOES DODGED', t.torpedoesDodged]] : [['DISTANCE', fmt(p.distance) + ' m'], ['CRASHES', p.crashes], ['BLACKOUTS', p.blackouts], ['ITEMS USED', p.itemsUsed], ['PEARLS', p.pearls]];
+        const stats = this.matchConfig.mode === 'treasure' ? [['CARRY TIME', (match ? t.carryTime : p.carryTime).toFixed(1) + ' s'], ['STEALS', match ? t.steals : p.steals], ['CRASHES', match ? t.crashes : p.crashes], ['ITEMS USED', match ? t.itemsUsed : p.itemsUsed]] : this.matchConfig.mode === 'arena' ? (match ? [['HITS LANDED', t.itemsLanded], ['SHOTS FIRED', t.itemsUsed], ['BUBBLES DODGED', t.torpedoesDodged], ['HULL CRASHES', t.crashes]] : [['HULL LEFT', p.lives + ' / 3'], ['SHOTS FIRED', p.itemsUsed], ['HULL CRASHES', p.crashes]]) : match ? [['BEST DISTANCE', fmt(t.bestDistance) + ' m'], ['ITEMS LANDED', t.itemsLanded], ['CRASHES', t.crashes], ['BLACKOUTS', t.blackouts], ['TORPEDOES DODGED', t.torpedoesDodged]] : [['DISTANCE', fmt(p.distance) + ' m'], ['CRASHES', p.crashes], ['BLACKOUTS', p.blackouts], ['ITEMS USED', p.itemsUsed], ['PEARLS', p.pearls]];
         return '<div class="v-result-pilot p' + (i + 1) + '"><b>PLAYER ' + (i + 1) + '</b><dl>' + stats.map(([k, v]) => '<div><dt>' + k + '</dt><dd>' + v + '</dd></div>').join('') + '</dl></div>';
       }).join('');
       $('versus-overlay-content').innerHTML = '<div class="eyebrow">' + (match ? 'THE OCEAN HAS A CHAMPION' : 'ROUND ' + this.round + ' COMPLETE') + '</div><h2 class="' + (winner === 1 ? 'teal' : '') + '">' + title + '</h2><p>' + (match ? MODES[this.matchConfig.mode] + ' · ' + this.stage.name : this.roundReason) + '</p><div class="v-score"><span>P1</span> ' + this.scores[0] + ' <small>—</small> ' + this.scores[1] + ' <span>P2</span></div><div class="v-result-stats">' + cards + '</div>' + (match ? '<div class="v-result-actions"><button id="versus-rematch" class="button primary">REMATCH <span>R ↻</span></button><button id="versus-change" class="button secondary">Change setup</button><button id="versus-result-title" class="text-button">Title</button></div><small>Rivalry saved on this device.' + (!this.save.storageAvailable ? ' Storage unavailable — session only.' : '') + '</small>' : '<div class="v-next" id="versus-next">Next dive in 3…</div>');
@@ -563,6 +646,15 @@
       if (!this.players.length) return;
       for (const p of this.players) {
         const i = p.index, r = p.rover, e = p.effects;
+        const reversed = $('v-reversed-' + i); reversed.hidden = !(e.riptide > 0);
+        writeText(reversed.querySelector('span'), Math.ceil(e.riptide || 0) + 's');
+        const tug = $('v-treasure-' + i); tug.hidden = !this.chest;
+        if (this.chest) {
+          const chest = this.chest, gap = (chest.x - r.x) / 10;
+          const hint = chest.carrier === i ? 'YOU CARRY ◆' : chest.carrier >= 0 ? 'RIVAL CARRIES ◆' : 'CHEST ' + (gap >= 0 ? 'AHEAD ▲ ' : 'BEHIND ◀ ') + Math.round(Math.abs(gap)) + ' m';
+          writeText(tug.querySelector('div'), 'P1 ' + this.players[0].carryTime.toFixed(1) + 's  ◆  P2 ' + this.players[1].carryTime.toFixed(1) + 's  / ' + (this.matchConfig.carryTarget || 30) + 's · ' + hint);
+          const meter = tug.querySelector('meter'); meter.min = -(this.matchConfig.carryTarget || 30); meter.max = this.matchConfig.carryTarget || 30; meter.value = this.players[0].carryTime - this.players[1].carryTime;
+        }
         const arena = this.matchConfig.mode === 'arena';
         writeText($('v-distance-' + i), arena ? 'BATTLE' : fmt(p.distance) + ' m');
         writeText($('v-progress-' + i), ['pearl', 'arena'].includes(this.matchConfig.mode) ? Math.ceil(this.remaining) + ' s · ROUND ' + this.round : (this.matchConfig.mode === 'race' ? '/ ' + fmt(this.matchConfig.target) + ' m · ' : '') + 'ROUND ' + this.round + ' · ' + this.scores.join('–'));
@@ -589,12 +681,12 @@
       const h = this.renderer.height, w = this.renderer.width;
       for (const p of this.players) {
         const camera = this.cameras[p.index]; camera.dt = this.phase === 'PAUSED' ? 0 : dt; camera.alpha = this.phase === 'RUNNING' ? clamp(this.accumulator / AR.FIXED_DT, 0, 1) : 1;
-        const scene = { state: 'RUNNING', mode: this.matchConfig.mode, crateCooldowns: this.crateCooldowns, sharks: this.hazards ? this.hazards.sharks : [], terrain: this.terrain, stage: this.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: this.players, pickups: this.pickups, projectiles: this.projectiles, explosions: this.explosions, shake: this.shake, flash: this.flash, time: this.time, headlight: p.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: this.matchConfig.mode === 'race' ? p.startX + this.matchConfig.target * 10 : null };
+        const scene = { state: 'RUNNING', mode: this.matchConfig.mode, crateCooldowns: this.crateCooldowns, sharks: this.hazards ? this.hazards.sharks : [], chest: this.chest, terrain: this.terrain, stage: this.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: this.players, pickups: this.pickups, projectiles: this.projectiles, explosions: this.explosions, shake: this.shake, flash: this.flash, time: this.time, headlight: p.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: this.matchConfig.mode === 'race' ? p.startX + this.matchConfig.target * 10 : null };
         this.renderer.render(scene, camera, { x: 0, y: p.index * (h / 2) + (p.index ? 1 : 0), width: w, height: h / 2 - 1 });
       }
     }
     inspect() {
-      return { state: 'VERSUS_' + this.phase, players: this.players.map(p => ({ ...p.rover.snapshot(), index: p.index, facing: p.facing, vehicle: p.base.id, maxOxygen: p.rover.maxOxygen, item: p.item, charges: p.charges, crashes: p.crashes, blackouts: p.blackouts, lives: p.lives, respawnKind: p.respawnKind, ghosting: Boolean(p.rover.ghosting), distance: p.distance, pearls: p.pearls, effects: { ...p.effects }, respawn: p.respawn, out: p.out, catchup: p.catchup, slipstream: p.slipstream, startX: p.startX, itemsUsed: p.itemsUsed, torque: p.rover.stats.torque, topSpeed: p.rover.stats.topSpeed })), versus: { phase: this.phase, round: this.round || 0, scores: [...this.scores], mode: (this.matchConfig || this.config).mode, target: (this.matchConfig || this.config).target, remaining: this.remaining, contacts: this.contacts || 0, time: this.time || 0, tally: { ...this.save.data.versus }, totals: this.totals ? this.totals.map(t => ({ ...t })) : [], projectiles: this.projectiles ? this.projectiles.map(q => ({ ...q })) : [], torpedoSpeed: TORPEDO_SPEED, bubbleSpeed: BUBBLE_SPEED, arena: this.terrain && this.terrain.arena ? { ...this.terrain.arena } : null, crateCooldowns: this.crateCooldowns ? [...this.crateCooldowns].map(([key, ready]) => [key, [...ready]]) : [], sharks: this.hazards ? this.hazards.sharks.map(q => ({ ...q })) : [], explosions: this.explosions ? this.explosions.map(e => ({ ...e })) : [], shake: this.shake || 0, flash: this.flash || 0, fps: this.frameSeconds ? this.frames / this.frameSeconds : 0 } };
+      return { state: 'VERSUS_' + this.phase, players: this.players.map(p => ({ ...p.rover.snapshot(), index: p.index, carryTime: p.carryTime, steals: p.steals, geyserX: p.geyserX, geyserY: p.geyserY, facing: p.facing, vehicle: p.base.id, maxOxygen: p.rover.maxOxygen, item: p.item, charges: p.charges, crashes: p.crashes, blackouts: p.blackouts, lives: p.lives, respawnKind: p.respawnKind, ghosting: Boolean(p.rover.ghosting), distance: p.distance, pearls: p.pearls, effects: { ...p.effects }, respawn: p.respawn, out: p.out, catchup: p.catchup, slipstream: p.slipstream, startX: p.startX, itemsUsed: p.itemsUsed, torque: p.rover.stats.torque, topSpeed: p.rover.stats.topSpeed })), versus: { phase: this.phase, round: this.round || 0, scores: [...this.scores], mode: (this.matchConfig || this.config).mode, target: (this.matchConfig || this.config).target, remaining: this.remaining, carryTarget: (this.matchConfig || this.config).carryTarget, chest: this.chest ? { ...this.chest } : null, bridges: this.terrain ? [...this.terrain.bridges] : [], worldTime: this.terrain?.worldTime || 0, contacts: this.contacts || 0, time: this.time || 0, tally: { ...this.save.data.versus }, totals: this.totals ? this.totals.map(t => ({ ...t })) : [], projectiles: this.projectiles ? this.projectiles.map(q => ({ ...q })) : [], torpedoSpeed: TORPEDO_SPEED, bubbleSpeed: BUBBLE_SPEED, arena: this.terrain && this.terrain.arena ? { ...this.terrain.arena } : null, crateCooldowns: this.crateCooldowns ? [...this.crateCooldowns].map(([key, ready]) => [key, [...ready]]) : [], sharks: this.hazards ? this.hazards.sharks.map(q => ({ ...q })) : [], explosions: this.explosions ? this.explosions.map(e => ({ ...e })) : [], shake: this.shake || 0, flash: this.flash || 0, fps: this.frameSeconds ? this.frames / this.frameSeconds : 0 } };
     }
     debug() {
       return {

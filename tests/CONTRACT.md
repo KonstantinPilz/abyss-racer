@@ -2,7 +2,7 @@
 
 All scripts are strict-mode IIFEs exposing `globalThis.AR` (also accessible as `AR` in a browser). Load order: `data.js`, `terrain.js`, `physics.js`, `contacts.js`, `save.js`, `audio.js`, `render.js`, `versus.js`, `game.js`. Solo/local modes have no external dependencies, fetched assets, build step, or runtime network access. Online alone lazily loads PeerJS; configured suggestions POST to Google Forms. Canvas coordinates increase right/down; 10 world pixels = 1 metre.
 
-Data: AR.STAGES array: objects with id (reef, kelp, wreck, volcanic, ice, abyss), name, cost, description, depth, palette {top,bottom,sand,ground,accent}, gravity, friction and terrain params as needed. AR.VEHICLES array: id (rover, crab, bike, truck, manta), name,cost,description,color, mass,wheelbase,radius,torque,topSpeed,spring,damping,travel,grip,oxygen,buoyancy,burst,cooldown. AR.UPGRADES array: id (engine,thrust,suspension,tires,oxygen,ballast),name,description,baseCost,maxLevel=12. AR.upgradeCost(id,currentLevel). AR.getStats(vehicleId,levels) returns upgraded vehicle config. All levels 0..12.
+Data: AR.STAGES array: objects with id (reef, kelp, wreck, volcanic, ice, abyss, city, whale, thermal), name, cost, description, depth, palette {top,bottom,sand,ground,accent}, gravity, friction and terrain params as needed. AR.VEHICLES array: id (rover, crab, bike, truck, manta), name,cost,description,color, mass,wheelbase,radius,torque,topSpeed,spring,damping,travel,grip,oxygen,buoyancy,burst,cooldown. AR.UPGRADES array: id (engine,thrust,suspension,tires,oxygen,ballast),name,description,baseCost,maxLevel=12. AR.upgradeCost(id,currentLevel). AR.getStats(vehicleId,levels) returns upgraded vehicle config. All levels 0..12.
 
 Terrain: new AR.Terrain(stageObject, seed=stage's fixed seed). .height(x) -> ground y, .slope(x) -> dy/dx, .ceiling(x) -> ceiling y or -Infinity; .maintain(x) prunes cached chunks. .vent(x) -> upward acceleration (volcanic vents and kelp hot springs). Optional .features(start,end) -> decorations {x,y,type,size}. .seed; .stage. At x=100 starter spawn, ground roughly y=400. Start flat for at least 200px. Height infinite / deterministic.
 
@@ -26,7 +26,7 @@ Versus audio also accepts `.update({ running, players: [{ running, throttle, spe
 
 `new AR.Versus(save, sound, renderer, exit)` creates the setup/HUD/result DOM. `exit` returns control to the title. Public integration uses `.active`, `.open()`, `.close()`, `.keydown(event)`, `.keys`, `.clearKeys()`, `.pause()`, `.resume()`, `.tick(dt)`, `.draw(dt, fallbackScene)`, and `.inspect()`. The game forwards keyboard/visibility events and invokes tick/draw from its existing animation loop. Both rovers share one terrain instance and seed. No second animation loop runs.
 
-`config` defaults to `{ mode: 'race', target: 500, bestOf: 3, stage: 'reef', vehicles: ['rover', 'rover'] }`. Valid modes are `race`, `survival`, `pearl`, and `arena`; targets are 500/1000/2000 metres; bestOf is 1/3/5. All five vehicle IDs and all six stage IDs are available independently of solo unlocks. Each player gets a fresh `AR.getStats(id, levels)` with all six upgrade levels set to 5. Match config is copied at start, so setup changes cannot alter a running round.
+`config` defaults to `{ mode: 'race', target: 500, bestOf: 3, carryTarget: 30, stage: 'reef', vehicles: ['rover', 'rover'] }`. Valid modes are `race`, `survival`, `pearl`, `arena`, and `treasure`; targets are 500/1000/2000 metres; bestOf is 1/3/5. All five vehicle IDs and all nine stage IDs are available independently of solo unlocks. Each player gets a fresh `AR.getStats(id, levels)` with all six upgrade levels set to 5. Match config is copied at start, so setup changes cannot alter a running round.
 
 | Input | P1 | P2 |
 | --- | --- | --- |
@@ -56,15 +56,16 @@ Ordinary crashes increment the player's crash count, discard their item/effects,
 | --- | --- | --- |
 | `ink` | Opponent ink for 3.5 s | victim `effects.ink` |
 | `torpedo` | Seabed projectile toward opponent; light vertical homing; maximum 12 s; instant Torpedoed! crash on unshielded hit | `projectiles[].type === 'torpedo'`; victim `effects.torpedo` on hit |
-| `net` | Opponent torque ×0.35 and heavy drag for 4 s | victim `effects.net` |
+| `net` | Opponent torque ×0.5, top speed ×0.5 and mild drag (0.08/s) for 4 s | victim `effects.net` |
+| `geyser` | 0.3 s warning, then 1.6× level-5 ballast impulse (×0.6 airborne), ±0.4 rad/s pitch, horizontal speed ×0.68; shield blocks | victim `effects.geyserWarning`, `effects.geyser`, `geyserX`, `geyserY` |
 | `siphon` | Transfer up to 25 oxygen, bounded by victim reserve and user's tank maximum | victim `effects.siphon`, user `effects.siphonGain` |
-| `riptide` | Swap opponent throttle/brake for 4 s | victim `effects.riptide` |
+| `riptide` | Swap opponent throttle/brake for 5 s | victim `effects.riptide` |
 | `shield` | Block one hostile item/projectile, or expire after 8 s | user `effects.shield`; `effects.blocked` on interception |
 | `turbo` | Torque ×1.6 and top speed ×1.4 for 3 s | user `effects.turbo` |
 | `magnet` | Steal floor(opponent pearls ×0.3), Pearl Rush only; otherwise replace with turbo | victim `effects.magnet`, user `effects.magnetGain` |
 | `anchor` | Two charges; each placed anchor lasts 15 s and hard-stops/bounces the opponent | `charges`, `projectiles[].type === 'anchor'`; victim `effects.anchor` on hit |
 
-Each use has a distinct sound cue and toast in both viewports. Successful attacks increment the attacker's match `itemsLanded` and set victim `effects.hit`. Shielded attacks do not count as landed. Torpedoes visibly passing a nearby opponent increment that victim's `torpedoesDodged` and set `effects.dodged`. The leader's item table favours shield/turbo/anchor. The trailing table favours attacks below 20 m, Turbo/torpedo/net from 20 m, and 50% Turbo / 30% torpedo / 20% net at 60 m or more. Ground crates are spaced 120–200 m with additional ramp crates.
+Each use has a distinct sound cue and toast in both viewports. Successful attacks increment the attacker's match `itemsLanded` and set victim `effects.hit`. Shielded attacks do not count as landed. Torpedoes visibly passing a nearby opponent increment that victim's `torpedoesDodged` and set `effects.dodged`. The leader's item table favours shield/turbo/anchor. The trailing table favours attacks below 20 m, Turbo/torpedo/net from 20 m, and 5/13 Turbo, 3/13 torpedo, 2/13 net, 2/13 riptide and 1/13 geyser at 60 m or more. Ground crates are spaced 120–200 m with additional ramp crates.
 
 Each player has host-owned `catchupWait` and `catchupCooldown` timers, initialized to zero each round. After pickups, crash handling and finish adjudication, an active round accumulates `catchupWait` up to 6 seconds while both racers are active, the slot is empty and the current progress deficit is at least 60 m. Otherwise it resets. At 6 seconds with no remaining cooldown, grant a one-charge held Turbo, reset the wait and set the cooldown to 12 seconds. Cooldown decreases during running simulation, including respawns; pause/countdown/results freeze both timers. Existing item snapshots, toast and sound events synchronize delivery without new protocol fields or guest simulation.
 
@@ -94,7 +95,7 @@ FIX2 rendering: `.setGraphics('crisp'|'performance')` applies a fixed density (C
 
 ## Online Versus (round 3)
 
-Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.2.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
+Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.3.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
 
 `new AR.Online(versus, {headless, now, ui})` decorates the existing versus controller while online is active. UI-free tests suppress only the versus presentation methods, as the existing logic fixture does. `attach('host'|'guest', transport, code)` binds a transport; `connected()` starts its handshake. The guest never calls `Rover.step`, `Versus.step`, pickup collection, projectile simulation, or match adjudication. `Versus.tick(dt, true)` is the host's unmodified fixed-step loop. Optional hooks in versus route online input, UI, phase and effect notifications; disabling `network` restores local mode.
 
@@ -104,7 +105,7 @@ Transport interface: `.on('open'|'close'|'error'|'data', callback)`, `.send(data
 
 Input packets include `{type:'input', epoch, round, seq, t, throttle, brake, burst, item, b, i}`. `b`/`i` are cumulative burst/item edge counters. They survive lost/reordered updates and quick taps between samples; the host consumes edges once per physics step. Held values expire after 400 ms. Periodic input targets 30 Hz, with immediate reliable packets on control changes/cancellation. Inputs for other epochs/rounds are ignored. Keyboard aliases and touch share the same source.
 
-Snapshots are binary ArrayBuffers, protocol byte 2, at 20 Hz. Codec exports: `AR.OnlineCore.Codec.encode(versus, sequence, timestampMs, epoch, edgeAck, {pickups,events})` and `.decode(buffer)`. Header contains epoch, sequence, time, round, phase/countdown time, match time, scores, input edge acknowledgements and flash/shake. Two rover records carry int32 centimetre positions, int16 velocity, uint16 orientation/wheel angles, relative int16 wheel offsets, oxygen/cooldown, respawn kind/crash reason, flags, item/charges, lives/blackouts/crashes/items used/pearls/distance, and 19 quantized effects. Projectile IDs persist within a round. At most 12 projectiles within 2,600 pixels of either rover are included; simulation/projectile lifetime is never capped. Remaining space contains redundant pickup/event hints, trimmed before 590 payload bytes. Full pickup/events travel on the ordered channel, with epoch/round gates. The guest’s event ledger handles out-of-order hints exactly once, and its collected ledger survives sector pruning.
+Snapshots are binary ArrayBuffers, protocol byte 3, at 20 Hz. Codec exports: `AR.OnlineCore.Codec.encode(versus, sequence, timestampMs, epoch, edgeAck, {pickups,events})` and `.decode(buffer)`. Header contains epoch, sequence, time, round, phase/countdown time, match time, scores, input edge acknowledgements and flash/shake. Two rover records carry int32 centimetre positions, int16 velocity, uint16 orientation/wheel angles, relative int16 wheel offsets, oxygen/cooldown, respawn kind/crash reason, flags, item/charges, lives/blackouts/crashes/items used/pearls/distance, and 23 quantized effects plus Round 5 state detailed below. Projectile IDs persist within a round. At most 12 projectiles within 2,600 pixels of either rover are included; simulation/projectile lifetime is never capped. Remaining space contains redundant pickup/event hints, trimmed before 590 payload bytes. Full pickup/events travel on the ordered channel, with epoch/round gates. The guest’s event ledger handles out-of-order hints exactly once, and its collected ledger survives sector pruning.
 
 `SnapshotBuffer` keeps a bounded history covering the 100 ms render buffer. Its time cursor never moves backward, old poses are rejected, rover/wheel angles interpolate via shortest arc, projectile IDs match across frames, and extrapolation ends at 150 ms. Crash/respawn/out transitions use the new pose directly. Guest presentation uses the existing renderer at full viewport with camera alpha 1; host uses normal physics interpolation. All HUD/results data originate at the host.
 
@@ -123,7 +124,7 @@ Suggestion configuration uses `AR.CONFIG.suggestionsFormAction` and `.suggestion
 
 Ice ceilings smoothly follow the seabed with at least 250 px clearance. `Terrain.platformsBetween(start,end)` returns bounded deterministic `{id,start,end,type}` decks in Kelp/Wreck; `platformHeight(x,deck)` and `platformSlope(x,deck)` are the exact rendered/collision surface. Platforms are one-way: jump through from below, land and drive above. `hotSpringsBetween` returns `{x,y,width,strength}` kelp springs whose acceleration is included by `vent(x)`; the volcanic formula is unchanged. `gravityCeiling(x)` returns ice or a current roof 340 px above the floor.
 
-`Rover.setGravityFlipped(bool)` starts a 0.6 s guided turn with a 1.25 s collision grace, signed gravity, ceiling wheel traction, and unchanged world-horizontal pedal directions. Set `jetThrust=240` for the item, or zero to stop it; force applies equally to all bodies and approaches a 1.4× top-speed cap. Grace suppresses rotation impacts, not oxygen depletion. `AR.WorldHazards(terrain).step(rovers,dt)` owns `.sharks` with `{id,homeX,x,y,phase,direction,timer,vx,vy}`. Phases are patrol/warning/lunge/recover. Reef/Abyss sharks warn 1.05 s before a 235 px/s aimed lunge, cost up to 7 oxygen with a 1-unit floor, and give a victim 4 s protection. Only the host/solo steps hazards; guests render snapshots.
+`Rover.setGravityFlipped(bool)` starts a 0.6 s guided turn with a 1.25 s collision grace, signed gravity, ceiling wheel traction, and unchanged world-horizontal pedal directions. Set `jetThrust=240` for the item, or zero to stop it; force applies equally to all bodies and approaches a 1.4× top-speed cap. Grace suppresses rotation impacts, not oxygen depletion. `AR.WorldHazards(terrain).step(rovers,dt)` owns `.sharks` with `{id,homeX,x,y,phase,direction,timer,vx,vy}`. Phases are patrol/warning/lunge/recover. Reef/Wreck/Abyss sharks and Whale Fall fish use the Round 5 warning/lunge/retreat and damage rules below. Only the host/solo steps hazards; guests render snapshots.
 
 Crates are independent of the shared pearl/oxygen ledger and always retain `collected=false`. `Versus.crateCooldowns` is a bounded Map from crate key to `[readyAtP0,readyAtP1]` in simulation seconds. Each racer collects every 2 s with an empty slot, independent of the other. Expired entries are pruned; pause freezes deadlines, regeneration preserves them, and newRound resets. A reliable deduplicated `crate` event carries `{key,index,readyAt}`; reconnect carries the complete map. The renderer hides a crate only while the viewer’s deadline is in the future.
 
@@ -131,4 +132,75 @@ New held items `gravity`/`jet` set user `effects.gravity=6` / `effects.jet=4`; e
 
 Arena mode calls `Terrain.setArena()` (bounds 0–1800, roof y=40, shallow seabed mounds). `player.facing` is +/-1 from last horizontal input. Item fires a 340 px/s straight `bubble`, 4 s lifetime, 0.8 s `effects.fireCooldown`; Ballast becomes a 1 s `effects.jumpCooldown` jump with no oxygen drain. `lives` is remaining hull, starting at 3; bullets and hull crashes cost one, 1.2 s safe respawn follows surviving damage, and 1.5 s spawn shielding blocks repeats. Final hits eliminate; simultaneous final losses tie. At 120 s compare hull, ties replay. Race pickups, sharks, catch-up and slipstream are disabled. Existing local/online inputs, rounds, results, and tally persistence apply.
 
-Protocol v2 carries facing, the four new effect timers, bubble types, and up to 4 sharks; snapshots remain below 600 bytes. Old clients fail the existing version handshake and are asked to reload. Browser regression tests use `/home/ubuntu/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell`; tests never submit suggestions. Gameplay selection prevention covers HUD/body/pedals with the WebKit prefix and selectstart/contextmenu cancellation while inputs, textareas and copyable room information remain selectable.
+Protocol v3 preserves facing, gravity/jet/cannon timers, bubble types, and up to four sharks, and adds the Round 5 state below. Old clients fail the existing version handshake and are asked to reload. Browser regression tests use `/home/ubuntu/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell`; tests never submit suggestions. Gameplay selection prevention covers HUD/body/pedals with the WebKit prefix and selectstart/contextmenu cancellation while inputs, textareas and copyable room information remain selectable.
+
+
+## Round 5 / 3.3.0 contract (supersedes earlier shark/protocol notes)
+
+New stage IDs are `city`, `whale`, `thermal`, appended to preserve existing stage
+indices. Costs are 7400/8600/11000. Each has `how`, palette, seed and terrain tuning.
+Garage canvas thumbnails use `Renderer.stageThumbnail(canvas, stage)`.
+
+`Terrain.worldTime`, `bridges: Map<number,number>` (bridge ID → trigger time), and
+`revision` are host-owned. `stepWorld(rovers,dt)` runs once before both rovers;
+solo runs it before its rover. No rendering method advances this state. A bridge
+begins collapse at trigger + .6 s; the permanent 112 px gap has smooth slopes.
+Chunk animations fall faster than the rover; the ground collider always exists.
+`revision` invalidates cached ground/decorations when collision height changes.
+`zonesBetween(start,end)` provides deterministic current/ribs/plankton/geyser/mud/
+elevator geometry. `environment(rover)` supplies current acceleration ±48 px/s²,
+mud half torque/top-speed, plankton +1 net O₂/s, and lift. Currents and elevators
+accelerate chassis and wheels together, prevent sleep, and introduce no pitch
+impulse. Ballast doubles elevator lift with no oxygen cost/cooldown. Natural vents
+charge until phase 3.45 s of a 4 s cycle; the launch window ends at 3.85 s and the
+visible column fades at 4 s. Each rover receives at most one impulse per cycle.
+
+`AR.launchGeyser(rover,strength,spin)` applies a 1.6× level-5 ballast impulse and
+sets `geyserFlight=2`; stronger upward drag limits flight to roughly two seconds.
+Victim column origin is latched at eruption, and the rumble follows the victim.
+Shield is checked on use and again at eruption, permitting a defensive late shield.
+Riptide's banner persists for its five-second effect, including paused frames.
+Pedals retain layout/labels, gain purple tint/⇄ and an accessible reversed-action
+label. The UI never mutates input mapping; only the host's `controls()` swaps it.
+
+`config.carryTarget` accepts 20, 30 or 45 (default 30). `treasure` shares ordinary
+items, terrain, oxygen, respawns and rounds. `Versus.chest` is null in other modes,
+otherwise `{x,y,vx,vy,carrier,previous,lock,lastTeleport}`. Carrier/previous use -1
+for nobody and 0/1 for players. Touch uses swept rover movement within 60 px.
+A carried chest follows below the chassis and multiplies top speed by .88.
+`dropChest(player)` is idempotent, bounces toward the opponent with 105 px/s and
+−100 px/s vertical speed, and locks the previous owner out for one second.
+Crash/blackout, torpedo and item/natural geyser drop it. A real contact with closing
+speed >70 px/s and the other rover at least 22 px above also drops it. A different
+next owner earns a steal. `updateChest(dt)` awards carry time and wins at target;
+`endRound` freezes score. At separation >3000 px the chest resets to the midpoint,
+at most once/second, with a toast on entering that state. `carryTime` and `steals`
+are included in player, round and match statistics.
+
+`WorldHazards(terrain,onBite?)` spawns sharks every ~1700 px after x=2300 in Reef,
+Wreck, Abyss, and fish schools in Whale Fall; deeper stages sometimes get a pair.
+Phases remain `patrol`, `warning`, `lunge`, `recover` (six seconds). Patrol approaches
+at .55× target speed; a .9 s warning commits to the predicted position .5 s beyond
+warning expiry. Hard braking therefore changes arrival without moving the warning
+line. Lunge speed is max(380,1.5×current target speed), length at least 600 px.
+Relative swept box/circle tests cover chassis and both wheels. Solo loses 20 oxygen
+and receives a shove/red flash; zero oxygen ends the run. Versus invokes its shield
+or ordinary `Shark bite` crash. Fish only shove, without oxygen/crash damage.
+Successful survival increments `rover.sharkEncounters`. `finishRun` preserves the
+maximum per-run count as `totals.sharkEncounters`; five earns `shark-attack` once.
+
+Binary protocol version is **3**; all peers require matching `AR.VERSION`.
+Snapshots include geyser warning/column timers and origins, reversed controls,
+environment flags, carry times/steals, chest position/owner/lockout, up to six nearby
+bridge trigger times, and up to two nearest sharks per player with committed aim
+points and fish flag. The snapshot clock is the stage clock. Buffer limit is 1200
+bytes; hints trim around 590 bytes, with reliable delivery retaining all events.
+Reliable `collapse` and `chest` events supplement snapshots; full reconnect restores
+the entire bridge map, and result phase messages contain exact carry/steal stats.
+The guest never invokes `stepWorld`, Rover.step or controller mechanics.
+
+New executable suites: `round5-mechanics.test.cjs`, `round5-online.test.cjs`,
+`round5-browser.test.cjs`. The latter captures both required viewport sizes into
+`/tmp/abyss-r5-*` and asserts console silence during real guest rendering. Debug-only
+`AR.debug.solo.scene()`, `.place(x)`, `.advance(seconds)` support solo QA; competitive
+mutation hooks remain blocked on the guest. Run every suite serially via the runner.

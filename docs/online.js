@@ -2,7 +2,7 @@
   'use strict';
   const AR = root.AR, C = AR.OnlineCore;
   const KEYS = { KeyA: 'brake', ArrowLeft: 'brake', KeyD: 'throttle', ArrowRight: 'throttle', KeyW: 'burst', ArrowUp: 'burst', Space: 'burst', KeyS: 'item', ArrowDown: 'item' };
-  const validConfig = c => c && ['race', 'survival', 'pearl', 'arena'].includes(c.mode) && [500, 1000, 2000].includes(c.target) && [1, 3, 5].includes(c.bestOf) && AR.STAGES.some(s => s.id === c.stage) && Array.isArray(c.vehicles) && c.vehicles.length === 2 && c.vehicles.every(id => AR.VEHICLES.some(v => v.id === id));
+  const validConfig = c => c && ['race', 'survival', 'pearl', 'arena', 'treasure'].includes(c.mode) && (c.carryTarget === undefined || [20, 30, 45].includes(c.carryTarget)) && [500, 1000, 2000].includes(c.target) && [1, 3, 5].includes(c.bestOf) && AR.STAGES.some(s => s.id === c.stage) && Array.isArray(c.vehicles) && c.vehicles.length === 2 && c.vehicles.every(id => AR.VEHICLES.some(v => v.id === id));
   class Online {
     constructor(versus, options = {}) {
       this.v = versus; this.headless = !!options.headless; this.now = options.now || (() => performance.now());
@@ -106,6 +106,8 @@
           cooldown[event.index] = Math.max(cooldown[event.index], event.readyAt);
           this.v.crateCooldowns.set(event.key, cooldown);
         }
+        if (event.type === 'collapse' && Number.isInteger(event.bridge) && Number.isFinite(event.at)) { this.v.terrain.bridges.set(event.bridge, event.at); this.v.terrain.revision++; }
+        if (event.type === 'chest' && event.chest && Number.isFinite(event.chest.x + event.chest.y)) this.v.chest = { ...event.chest };
         if (event.type === 'sound' && typeof event.name === 'string') this.sound.play(event.name);
         if (event.type === 'toast' && typeof event.text === 'string') this.v.players.forEach(p => { p.toast = event.text.slice(0, 180); p.toastTime = 3; });
         if (event.type === 'hit') { this.metrics.hitEvents++; if (this.v.players[event.victim]) this.v.players[event.victim].effects.hit = .8; }
@@ -126,12 +128,13 @@
       this.metrics.snapshots++; this.metrics.bytes += bytes.byteLength; this.metrics.maxBytes = Math.max(this.metrics.maxBytes, bytes.byteLength);
       this.send(bytes, 'state');
     }
-    phaseData() { const v = this.v; return { type: 'phase', epoch: this.epoch, round: v.round, phase: v.phase, beforePause: v.beforePause, phaseTime: v.phaseTime, time: v.time, scores: v.scores, totals: v.totals, roundWinner: v.roundWinner, roundReason: v.roundReason, matchWinner: v.matchWinner }; }
+    phaseData() { const v = this.v; return { type: 'phase', epoch: this.epoch, round: v.round, phase: v.phase, beforePause: v.beforePause, phaseTime: v.phaseTime, time: v.time, scores: v.scores, totals: v.totals, roundWinner: v.roundWinner, roundReason: v.roundReason, matchWinner: v.matchWinner, roundStats: v.players.map(p => ({ carryTime: p.carryTime, steals: p.steals })) }; }
     publishPhase() { this.lastPhase = this.v.phase; this.send(this.phaseData()); if (this.v.phase === 'MATCH_RESULT') this.releaseWake(); this.ui.show(); }
     phase(m) {
       if (m.epoch !== this.epoch || m.round !== this.v.round || !C.PHASES.includes(m.phase)) return;
       const v = this.v; const changed = v.phase !== m.phase;
       for (const key of ['phase', 'beforePause', 'phaseTime', 'time', 'scores', 'totals', 'roundWinner', 'roundReason', 'matchWinner']) if (m[key] !== undefined) v[key] = structuredClone(m[key]);
+      if (Array.isArray(m.roundStats)) m.roundStats.forEach((stats, i) => { if (v.players[i] && Number.isFinite(stats.carryTime + stats.steals)) Object.assign(v.players[i], stats); });
       v.remaining = Math.max(0, (v.matchConfig.mode === 'arena' ? 120 : 90) - v.time);
       if (this.state === 'RECONNECTING' && this.transport.connected) { this.watch.recover(this.now()); this.state = 'MATCH'; }
       if (changed) { this.clearInput(); v.show(); }
@@ -186,6 +189,7 @@
             if (!this.makeRound(m)) return;
             this.v.matchSaved = saved; this.applyPickups(m.collected);
             this.v.crateCooldowns = new Map(m.crateCooldowns || []);
+            if (Array.isArray(m.bridges)) { this.v.terrain.bridges = new Map(m.bridges); this.v.terrain.revision++; }
             const s = C.Codec.decode(m.snapshot); this.buffer.push(s, this.now()); this.applySnapshot(s); this.phase(m.phaseData);
             this.send({ type: 'syncAck', epoch: this.epoch }); this.state = 'RECONNECTING'; this.ui.render();
             this.metrics.recoveries++;
@@ -195,7 +199,7 @@
     }
     sendSync() {
       const v = this.v;
-      this.send({ type: 'sync', epoch: this.epoch, round: v.round, config: v.matchConfig, scores: v.scores, totals: v.totals, eventFloor: this.eventId, collected: [...v.collected], crateCooldowns: [...v.crateCooldowns], phaseData: this.phaseData(), snapshot: C.Codec.encode(v, ++this.seq, this.now(), this.epoch) });
+      this.send({ type: 'sync', epoch: this.epoch, round: v.round, config: v.matchConfig, scores: v.scores, totals: v.totals, eventFloor: this.eventId, collected: [...v.collected], crateCooldowns: [...v.crateCooldowns], bridges: [...v.terrain.bridges], phaseData: this.phaseData(), snapshot: C.Codec.encode(v, ++this.seq, this.now(), this.epoch) });
     }
     controls(i) { return this.inputs[i].held(this.now()); }
     consumeEdges() {
@@ -308,6 +312,10 @@
         p.crashReason = r.crashed || (p.respawnKind === 'blackout' ? 'Out of air' : 'Hull crushed');
       }
       v.time = s.time; v.remaining = Math.max(0, (v.matchConfig.mode === 'arena' ? 120 : 90) - s.time); v.phaseTime = s.phaseTime; v.scores = s.scores; v.projectiles = s.projectiles; v.shake = s.shake; v.flash = s.flash;
+      v.chest = s.chest;
+      const oldTime = v.terrain.worldTime; v.terrain.worldTime = s.time;
+      for (const [id, at] of s.bridges || []) { if (!v.terrain.bridges.has(id)) v.terrain.revision++; v.terrain.bridges.set(id, at); }
+      for (const at of v.terrain.bridges.values()) if (oldTime - at < .6 && s.time - at >= .6) v.terrain.revision++;
       if (v.hazards) v.hazards.sharks = s.sharks || [];
       for (const [key, times] of v.crateCooldowns) if (times.every(t => t <= v.time)) v.crateCooldowns.delete(key);
       v.generatePickups();
@@ -316,7 +324,7 @@
       const v = this.v;
       if (!v.players.length || !['MATCH', 'RECONNECTING'].includes(this.state)) { v.renderer.draw(fallback, dt, 1); return; }
       const p = v.players[this.index], camera = v.cameras[this.index]; camera.dt = v.phase === 'PAUSED' || this.state === 'RECONNECTING' ? 0 : dt; camera.alpha = this.role === 'host' && v.phase === 'RUNNING' ? Math.min(1, v.accumulator / AR.FIXED_DT) : 1;
-      v.renderer.render({ state: 'RUNNING', terrain: v.terrain, stage: v.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: v.players, mode: v.matchConfig.mode, crateCooldowns: v.crateCooldowns, sharks: v.hazards?.sharks || [], pickups: v.pickups, projectiles: v.projectiles, explosions: v.explosions, shake: v.shake, flash: v.flash, time: v.time, headlight: this.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: v.matchConfig.mode === 'race' ? p.startX + v.matchConfig.target * 10 : null }, camera, { x: 0, y: 0, width: v.renderer.width, height: v.renderer.height });
+      v.renderer.render({ state: 'RUNNING', terrain: v.terrain, stage: v.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: v.players, mode: v.matchConfig.mode, crateCooldowns: v.crateCooldowns, sharks: v.hazards?.sharks || [], chest: v.chest, pickups: v.pickups, projectiles: v.projectiles, explosions: v.explosions, shake: v.shake, flash: v.flash, time: v.time, headlight: this.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: v.matchConfig.mode === 'race' ? p.startX + v.matchConfig.target * 10 : null }, camera, { x: 0, y: 0, width: v.renderer.width, height: v.renderer.height });
     }
     show() { this.ui.show(); }
     async wake() {

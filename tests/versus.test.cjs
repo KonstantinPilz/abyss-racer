@@ -140,7 +140,7 @@ let browser;
   assert.equal(await page.evaluate(() => typeof AR.debug.fireTorpedo), 'function');
   await page.click('#enter-versus');
   assert.equal((await inspect()).state, 'VERSUS_SETUP');
-  assert.equal(await page.$$eval('#versus-stage option', options => options.length), 6);
+  assert.equal(await page.$$eval('#versus-stage option', options => options.length), 9);
   assert.equal(await page.$$eval('#versus-rounds option', options => options.map(option => option.value).join('/')), '1/3/5');
   assert.equal(await page.$$eval('#versus-target option', options => options.map(option => option.value).join('/')), '500/1000/2000');
   const p1Vehicles = [], p2Vehicles = [];
@@ -174,7 +174,7 @@ let browser;
   assert.deepEqual(tournament.actual[0], tournament.actual[1]);
   assert.equal(tournament.actual[0][0], tournament.expected[0]);
   assert.equal(tournament.actual[0][1], tournament.expected[1]);
-  pass('keyboard vehicle selection, all five tournament vehicles/six stages, setup options, and frozen 3-2-1-GO countdown');
+  pass('keyboard vehicle selection, all five tournament vehicles/nine stages, setup options, and frozen 3-2-1-GO countdown');
 
   // Only real browser frames run during this driving and FPS measurement section.
   const start = await inspect();
@@ -264,7 +264,7 @@ let browser;
     const toasts = await page.$$eval('.v-toast', nodes => nodes.map(node => node.textContent));
     assert.equal(toasts[0], toasts[1]); assert.match(toasts[0], /P1 hit P2/);
     if (id === 'ink') { await advance(.5); await screenshot('ink'); }
-    if (id === 'net') assert.ok(hit.players[1].torque <= original.players[1].torque * .36);
+    if (id === 'net') assert.ok(hit.players[1].torque <= original.players[1].torque * .51);
     if (id === 'riptide') {
       await page.keyboard.down('ArrowRight');
       hit = await advance(.3);

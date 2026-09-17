@@ -18,6 +18,7 @@
       this.stage = stage || AR.STAGES[0];
       this.seed = seed === undefined ? this.stage.seed : seed;
       this.chunks = new Map();
+      this.worldTime = 0; this.bridges = new Map(); this.revision = 0;
     }
     rawHeight(x) {
       if (this.arena) return 470 - 32 * Math.pow(Math.sin(Math.PI * Math.max(0, Math.min(1800, x)) / 900), 4);
@@ -58,7 +59,7 @@
       this.chunks.set(index, heights);
       return heights;
     }
-    height(x) {
+    baseHeight(x) {
       const index = Math.floor(x / CHUNK_SIZE);
       const chunk = this.chunk(index);
       const at = (x - index * CHUNK_SIZE) / SAMPLE_SIZE;
@@ -66,9 +67,73 @@
       const t = at - i;
       return chunk[i] + (chunk[i + 1] - chunk[i]) * t;
     }
+    bridgeAt(x) {
+      if (this.arena || this.stage.id !== 'city' || x < 1800) return null;
+      const id = Math.floor((x - 1800) / 2600), start = 1800 + id * 2600;
+      return x <= start + 520 ? { id, start, end: start + 520, y: this.baseHeight(start + 260) } : null;
+    }
+    height(x) {
+      const b = this.bridgeAt(x);
+      if (!b) return this.baseHeight(x);
+      const u = (x - b.start) / 520, edge = smooth(Math.min(1, u * 2.5, (1 - u) * 2.5));
+      const base = this.baseHeight(x) * (1 - edge) + b.y * edge;
+      const at = this.bridges.get(b.id);
+      return base + (at !== undefined && this.worldTime - at >= .6 ? 112 * edge : 0);
+    }
+    zonesBetween(start, end) {
+      if (this.arena) return [];
+      const zones = [];
+      for (let i = Math.max(0, Math.floor((start - 3200) / 3000)); i <= Math.floor(end / 3000); i++) {
+        const x = 900 + i * 3000;
+        const add = (type, from, width, extra = {}) => { if (from <= end && from + width >= start) zones.push({ id: type + i, type, start: from, end: from + width, ...extra }); };
+        if (this.stage.id === 'city') add('current', x, 620, { direction: i % 2 ? -1 : 1 });
+        if (this.stage.id === 'whale') { add('ribs', x, 820); add('plankton', x + 1000, 650); }
+        if (this.stage.id === 'thermal') { add('geyser', x, 110, { offset: i * .73 }); add('mud', x + 500, 390); add('elevator', x + 1500, 210); }
+      }
+      return zones;
+    }
+    environment(rover) {
+      const out = { current: 0, mud: false, plankton: false, lift: 0 };
+      for (const z of this.zonesBetween(rover.x, rover.x)) {
+        const depth = this.height(rover.x) - rover.y;
+        if (depth < 0 || depth > 320) continue;
+        if (z.type === 'current') out.current = z.direction * 48;
+        if (z.type === 'mud' && depth < 85) out.mud = true;
+        if (z.type === 'plankton' && depth < 230) out.plankton = true;
+        if (z.type === 'elevator') out.lift = Math.abs(rover.gravity()) + 42;
+      }
+      return out;
+    }
+    ventPhase(z) { return ((this.worldTime + z.offset) % 4 + 4) % 4; }
+    stepWorld(rovers, dt) {
+      const before = this.worldTime; this.worldTime += dt;
+      for (const [id, at] of this.bridges) if (before - at < .6 && this.worldTime - at >= .6) this.revision++;
+      for (const r of rovers) {
+        if (r.crashed) continue;
+        for (const w of r.wheels) {
+          const b = this.bridgeAt(w.x);
+          if (b && !this.bridges.has(b.id) && w.grounded && Math.abs(w.y + w.radius - this.height(w.x)) < 8) {
+            this.bridges.set(b.id, this.worldTime);
+            if (this.onCollapse) this.onCollapse(b.id, this.worldTime);
+          }
+        }
+        for (const z of this.zonesBetween(r.x, r.x)) if (z.type === 'geyser') {
+          const cycle = Math.floor((this.worldTime + z.offset) / 4);
+          if (this.ventPhase(z) >= 3.45 && this.ventPhase(z) < 3.85 && this.height(r.x) - r.y < 300 && r.lastVent !== z.id + ':' + cycle) {
+            r.lastVent = z.id + ':' + cycle;
+            AR.launchGeyser(r, r.grounded ? 1 : .6, 0); r.naturalGeyser = .8;
+            if (this.onGeyser) this.onGeyser(r);
+          }
+        }
+      }
+    }
     slope(x) { return (this.height(x + 4) - this.height(x - 4)) / 8; }
     ceiling(x) {
       if (this.arena) return this.arena.ceiling;
+      if (this.stage.id === 'whale') {
+        const z = this.zonesBetween(x, x).find(z => z.type === 'ribs');
+        return z ? this.height(x) - 180 - 90 * Math.pow(Math.abs((x - (z.start + z.end) / 2) / 410), 4) : -Infinity;
+      }
       if (this.stage.id !== 'ice') return -Infinity;
       const ice = 87 + noise(x / 490, this.seed + 57) * 35 + Math.sin(x / 116) * 12;
       const clearance = this.height(x) - 250;
@@ -147,7 +212,7 @@
     features(start, end) {
       const result = [];
       const stage = this.stage.id;
-      const type = { reef: 'coral', kelp: 'kelp', wreck: 'wreck', volcanic: 'vent', ice: 'ice', abyss: 'angler' }[stage];
+      const type = { reef: 'coral', kelp: 'kelp', wreck: 'wreck', volcanic: 'vent', ice: 'ice', abyss: 'angler', city: 'column', whale: 'bone', thermal: 'spring' }[stage];
       for (let i = Math.floor(start / 180); i <= Math.ceil(end / 180); i++) {
         const x = i * 180 + hash(i, this.seed + 3) * 120;
         result.push({ x: x, y: this.height(x), type: type, size: 0.65 + hash(i, this.seed + 8) * 1.1, seed: hash(i, this.seed + 11) });
@@ -155,65 +220,100 @@
       return result;
     }
   }
+  // Shared impulse: every suspension body receives the same velocity change.
+  AR.launchGeyser = function (r, strength = 1, spin = (Math.random() * .8 - .4)) {
+    const impulse = AR.getStats(r.stats.id, { ballast: 5 }).burst * 1.6 * strength;
+    r.sleeping = false; r.sleepTime = 0; r.grounded = false; r.omega += spin;
+    for (const body of [r, ...r.wheels]) { body.vy = Math.min(0, body.vy) - impulse; body.vx *= .68; body.grounded = false; }
+    r.geyserFlight = 2;
+  };
+  function sweptCircle(ax, ay, bx, by, radius) {
+    const dx = bx - ax, dy = by - ay, t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy || 1)));
+    return Math.hypot(ax + dx * t, ay + dy * t) <= radius;
+  }
+  function sweptBox(ax, ay, bx, by, halfX, halfY) {
+    let lo = 0, hi = 1;
+    for (const [a, b, size] of [[ax, bx, halfX], [ay, by, halfY]]) {
+      const d = b - a;
+      if (Math.abs(d) < 1e-9) { if (Math.abs(a) > size) return false; continue; }
+      const t1 = (-size - a) / d, t2 = (size - a) / d;
+      lo = Math.max(lo, Math.min(t1, t2)); hi = Math.min(hi, Math.max(t1, t2));
+      if (lo > hi) return false;
+    }
+    return true;
+  }
   class WorldHazards {
-    constructor(terrain) {
-      this.terrain = terrain;
-      this.sharks = [];
-      this.time = 0;
-      this.cooldowns = new WeakMap();
+    constructor(terrain, onBite) {
+      this.terrain = terrain; this.onBite = onBite;
+      this.sharks = []; this.time = 0; this.cooldowns = new WeakMap(); this.retired = new Map();
+    }
+    hit(shark, oldX, oldY, r) {
+      const prev = r.prev || r, c = Math.cos(r.angle), s = Math.sin(r.angle);
+      const ax = oldX - prev.x, ay = oldY - prev.y, bx = shark.x - r.x, by = shark.y - r.y;
+      if (sweptBox(ax * c + ay * s, -ax * s + ay * c, bx * c + by * s, -bx * s + by * c, r.stats.wheelbase * .45 + 14, 27)) return true;
+      return r.wheels.some((w, i) => { const p = prev.wheels?.[i] || w; return sweptCircle(oldX - p.x, oldY - p.y, shark.x - w.x, shark.y - w.y, w.radius + 14); });
+    }
+    retreat(shark, active) {
+      shark.phase = 'recover'; shark.timer = 6; this.retired.set(shark.id, this.time + 6);
+      for (const r of active) if (shark.target === r && r.oxygen > 0 && !r.crashed) r.sharkEncounters = (r.sharkEncounters || 0) + 1;
+      shark.target = null;
     }
     step(rovers, dt) {
-      dt = Math.max(0, Math.min(Number(dt) || 0, 1 / 30));
-      this.time += dt;
-      const active = (rovers || []).filter(function (rover) { return rover && !rover.crashed && !rover.out && !rover.respawn; });
-      if (this.terrain.arena || (this.terrain.stage.id !== 'reef' && this.terrain.stage.id !== 'abyss') || !active.length) { this.sharks = []; return; }
+      dt = Math.max(0, Math.min(Number(dt) || 0, 1 / 30)); this.time += dt;
+      const active = (rovers || []).filter(r => r && !r.crashed && !r.out && !r.respawn), stage = this.terrain.stage.id;
+      if (this.terrain.arena || !['reef', 'abyss', 'wreck', 'whale'].includes(stage) || !active.length) { this.sharks = []; return; }
+      for (const [id, until] of this.retired) if (until < this.time - 6) this.retired.delete(id);
       const needed = new Set();
-      for (const rover of active) {
-        this.cooldowns.set(rover, Math.max(0, (this.cooldowns.get(rover) || 0) - dt));
-        for (let cell = Math.max(0, Math.floor((rover.x - 3600) / 3200)); cell <= Math.floor((rover.x - 1800) / 3200); cell++) {
-          const homeX = 2850 + cell * 3200 + hash(cell, this.terrain.seed + 208) * 350;
-          if (Math.abs(homeX - rover.x) > 1000) continue;
-          needed.add(cell);
-          if (!this.sharks.some(function (shark) { return shark.id === cell; })) this.sharks.push({ id: cell, homeX: homeX, x: homeX, y: this.terrain.height(homeX) - 65, phase: 'patrol', direction: -1, timer: 0, vx: 0, vy: 0 });
+      for (const r of active) {
+        this.cooldowns.set(r, Math.max(0, (this.cooldowns.get(r) || 0) - dt));
+        for (let cell = Math.max(0, Math.floor((r.x - 3800) / 1700)); cell <= Math.floor((r.x - 1700) / 1700); cell++) {
+          const home = 2850 + cell * 1700 + hash(cell, this.terrain.seed + 208) * 240;
+          for (let j = 0; j < (['abyss', 'wreck', 'whale'].includes(stage) && cell % 3 === 2 ? 2 : 1); j++) {
+            const id = cell * 2 + j, homeX = home + j * 440;
+            if (Math.abs(homeX - r.x) > 1350) continue;
+            needed.add(id);
+            if (!this.sharks.some(q => q.id === id) && !(this.retired.get(id) > this.time)) this.sharks.push({ id, homeX, x: homeX, y: this.terrain.height(homeX) - 38, phase: 'patrol', direction: -1, timer: 0, vx: 0, vy: 0, fish: stage === 'whale' });
+          }
         }
       }
-      this.sharks = this.sharks.filter(function (shark) { return needed.has(shark.id); });
-      for (const shark of this.sharks) {
-        shark.timer = Math.max(0, shark.timer - dt);
-        const target = active.reduce(function (best, rover) { return !best || Math.hypot(rover.x - shark.x, rover.y - shark.y) < Math.hypot(best.x - shark.x, best.y - shark.y) ? rover : best; }, null);
-        const distance = Math.hypot(target.x - shark.x, target.y - shark.y);
-        if (shark.phase === 'patrol') {
-          shark.x = shark.homeX + Math.sin(this.time * 0.7 + shark.id) * 90;
-          shark.y = this.terrain.height(shark.x) - 65 - Math.sin(this.time * 1.4 + shark.id) * 12;
-          shark.direction = Math.cos(this.time * 0.7 + shark.id) >= 0 ? 1 : -1;
-          if (target.x >= 2300 && distance < 390) { shark.phase = 'warning'; shark.timer = 1.05; }
-        } else if (shark.phase === 'warning') {
-          shark.direction = target.x >= shark.x ? 1 : -1;
-          if (!shark.timer) {
-            const length = Math.max(1, distance);
-            shark.vx = (target.x - shark.x) / length * 235;
-            shark.vy = (target.y - shark.y) / length * 235;
-            shark.phase = 'lunge'; shark.timer = 1.15;
+      this.sharks = this.sharks.filter(q => needed.has(q.id) || q.phase === 'lunge' || q.phase === 'warning');
+      for (const q of this.sharks) {
+        q.timer = Math.max(0, q.timer - dt);
+        const target = active.reduce((a, r) => !a || Math.abs(r.x - q.x) < Math.abs(a.x - q.x) ? r : a, null);
+        if (q.phase === 'recover') { q.x += q.direction * 600 * dt; q.y -= 100 * dt; if (!q.timer) { q.phase = 'patrol'; q.x = q.homeX; } continue; }
+        if (q.phase === 'patrol') {
+          q.direction = Math.sign(target.x - q.x) || -1;
+          q.x += q.direction * Math.max(45, Math.abs(target.vx) * .55) * dt;
+          q.y = this.terrain.height(q.x) - 110;
+          if (target.x >= 2300 && Math.abs(target.x - q.x) < 480) { q.phase = 'warning'; q.timer = .9; Object.defineProperty(q, 'target', { value: target, writable: true, configurable: true }); q.aimX = target.x + target.vx * 1.4; q.aimY = this.terrain.height(q.aimX) - 38; }
+        } else if (q.phase === 'warning') {
+          // Commit to the warning line: .9 s warning + .5 s target lead. Braking changes the rover's arrival, not this path.
+          q.direction = Math.sign(q.aimX - q.x) || 1;
+          if (q.timer <= 1e-8) {
+            const dx = q.aimX - q.x, dy = q.aimY - q.y, length = Math.hypot(dx, dy) || 1;
+            const speed = Math.max(380, Math.abs(target.vx) * 1.5);
+            q.vx = dx / length * speed; q.vy = dy / length * speed;
+            q.phase = 'lunge'; q.timer = Math.max(1.2, 600 / speed);
           }
-        } else if (shark.phase === 'lunge') {
-          const oldX = shark.x, oldY = shark.y;
-          shark.x += shark.vx * dt; shark.y += shark.vy * dt;
-          for (const rover of active) {
-            if (rover.x < 2300 || this.cooldowns.get(rover) > 0) continue;
-            const dx = shark.x - oldX, dy = shark.y - oldY;
-            const t = Math.max(0, Math.min(1, ((rover.x - oldX) * dx + (rover.y - oldY) * dy) / Math.max(1e-9, dx * dx + dy * dy)));
-            if (Math.hypot(rover.x - oldX - dx * t, rover.y - oldY - dy * t) > 40) continue;
-            // A bite costs air and gives a recoverable shove, never a crash.
-            rover.oxygen = Math.max(Math.min(rover.oxygen, 1), rover.oxygen - 7);
-            rover.sleeping = false; rover.sleepTime = 0;
-            rover.vx += shark.direction * 65; rover.vy -= 35;
-            rover.wheels.forEach(function (wheel) { wheel.vx += shark.direction * 65; wheel.vy -= 35; });
-            rover.sharkBite = 0.65;
-            this.cooldowns.set(rover, 4);
-            shark.phase = 'recover'; shark.timer = 3;
+        } else if (q.phase === 'lunge') {
+          const oldX = q.x, oldY = q.y; q.x += q.vx * dt; q.y += q.vy * dt;
+          for (const r of active) {
+            if (r.x < 2300 || this.cooldowns.get(r) > 0 || !this.hit(q, oldX, oldY, r)) continue;
+            this.cooldowns.set(r, 2);
+            const blocked = this.onBite && this.onBite(r, q);
+            if (!blocked && !this.onBite) {
+              if (!q.fish) r.oxygen = Math.max(0, r.oxygen - 20);
+              r.sleeping = false; r.sleepTime = 0;
+              for (const body of [r, ...r.wheels]) { body.vx += q.direction * (q.fish ? 55 : 180); body.vy -= q.fish ? 22 : 65; }
+              r.sharkBite = q.fish ? .35 : 1;
+              // A bite is recoverable; its shove cannot crush the hull immediately.
+              r.gravityGrace = q.fish ? .5 : 1;
+              if (!r.oxygen) r.crashed = 'Oxygen depleted';
+            }
+            this.retreat(q, active); break;
           }
-          if (!shark.timer) { shark.phase = 'recover'; shark.timer = 3; }
-        } else if (!shark.timer) shark.phase = 'patrol';
+          if (!q.timer && q.phase === 'lunge') this.retreat(q, active);
+        }
       }
     }
   }

@@ -16,3 +16,4 @@ body[data-state="RUNNING"], body[data-versus="RUNNING"],
 input, textarea, [contenteditable="true"], .selectable, #online-code {
   -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
 }
+.stage-thumbnail{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.stage-number{z-index:1}.stage-how{font-size:11px!important;color:#b9dad5!important}.stage-art:has(.stage-thumbnail)::after{opacity:.2}

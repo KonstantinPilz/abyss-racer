@@ -213,7 +213,7 @@ test('all achievement predicates work, reward once, and high XP unlocks cosmetic
   const save = new env.AR.Save();
   Object.assign(save.data, { totalRuns: 50, totalDistance: 25000, vehicles: env.AR.VEHICLES.map(v => v.id), stages: env.AR.STAGES.map(s => s.id) });
   Object.assign(save.data.bests, { 'reef:rover': 2500, 'ice:rover': 1000, 'abyss:rover': 500 });
-  Object.assign(save.data.totals, { pearls: 5000, flips: 3, maxFlips: 3, chests: 10, golden: 5, airtime: 120, bursts: 50 });
+  Object.assign(save.data.totals, { pearls: 5000, flips: 3, maxFlips: 3, chests: 10, golden: 5, airtime: 120, bursts: 50, sharkEncounters: 5 });
   assert.equal(save.checkAchievements().length, env.AR.ACHIEVEMENTS.length);
   assert.equal(save.checkAchievements().length, 0);
   const xp = env.AR.xpForLevel(10);

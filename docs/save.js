@@ -38,6 +38,7 @@
   ];
 
   AR.ACHIEVEMENTS = [
+    { id: 'shark-attack', name: 'Shark attack', description: 'Survive five shark encounters in one expedition.', reward: 350, test: d => d.totals.sharkEncounters >= 5 },
     { id: 'first-dive', name: 'First dive', description: 'Finish your first expedition.', reward: 50, test: d => d.totalRuns >= 1 },
     { id: 'first-100', name: 'Finding your fins', description: 'Travel 100 m in one run.', reward: 50, test: d => maximumDistance(d) >= 100 },
     { id: 'first-500', name: 'First 500 m', description: 'Travel 500 m in one run.', reward: 150, test: d => maximumDistance(d) >= 500 },
@@ -53,7 +54,7 @@
     { id: 'ice-cold', name: 'Ice cold', description: 'Travel 1,000 m on Ice Shelf.', reward: 400, test: d => stageDistance(d, 'ice') >= 1000 },
     { id: 'abyss-walker', name: 'Into the black', description: 'Travel 500 m in Abyssal Trench.', reward: 350, test: d => stageDistance(d, 'abyss') >= 500 },
     { id: 'fleet', name: 'A full fleet', description: 'Own all five vehicles.', reward: 500, test: d => d.vehicles.length >= 5 },
-    { id: 'cartographer', name: 'Cartographer', description: 'Unlock all six stages.', reward: 500, test: d => d.stages.length >= 6 },
+    { id: 'cartographer', name: 'Cartographer', description: 'Unlock six ocean stages.', reward: 500, test: d => d.stages.length >= 6 },
     { id: 'veteran', name: 'Seasoned submariner', description: 'Finish 50 expeditions.', reward: 500, test: d => d.totalRuns >= 50 },
     { id: 'deep-odometer', name: 'Long way from home', description: 'Travel 25 km in total.', reward: 500, test: d => d.totalDistance >= 25000 }
   ];
@@ -75,7 +76,7 @@
       totalDistance: number(source.totalDistance),
       versus: { p1Wins: 0, p2Wins: 0, matches: 0 },
       xp: integer(source.xp, MAX_XP), level: 1, achievements: [],
-      totals: { pearls: 0, chests: 0, golden: 0, flips: 0, airtime: 0, bursts: 0, maxFlips: 0 },
+      totals: { pearls: 0, chests: 0, golden: 0, flips: 0, airtime: 0, bursts: 0, maxFlips: 0, sharkEncounters: 0 },
       settings: { muted: false, headlight: 'aqua', trail: 'bubbles', graphics: 'crisp' }
     };
     if (data.stages.includes(source.selectedStage)) data.selectedStage = source.selectedStage;
@@ -233,6 +234,7 @@
       data.pearls = Math.min(MAX_PEARLS, data.pearls + pearls);
       data.totals.pearls = Math.min(MAX_COUNTER, data.totals.pearls + pearls);
       for (const key of ['flips', 'airtime', 'chests', 'golden', 'bursts']) data.totals[key] = Math.min(MAX_COUNTER, data.totals[key] + number(run[key]));
+      data.totals.sharkEncounters = Math.max(data.totals.sharkEncounters, integer(run.sharkEncounters));
       data.totals.maxFlips = Math.max(data.totals.maxFlips, integer(run.maxFlips));
       const previousXP = data.xp;
       const previousLevel = data.level;

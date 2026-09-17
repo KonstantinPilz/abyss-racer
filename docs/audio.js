@@ -147,6 +147,11 @@
         case 'net':
           [340, 255, 190].forEach((frequency, index) => this.tone(frequency, 0.18, 0.1, 'triangle', index * 0.09, frequency * 0.7));
           break;
+        case 'geyser':
+          this.noise(.7, .25, 1300);
+          this.tone(65, .5, .14, 'triangle', 0, 650);
+          this.tone(740, .3, .07, 'sine', .2, 180);
+          break;
         case 'siphon':
           [900, 670, 450, 230].forEach((frequency, index) => this.tone(frequency, 0.16, 0.085, 'sine', index * 0.075, frequency + 130));
           break;

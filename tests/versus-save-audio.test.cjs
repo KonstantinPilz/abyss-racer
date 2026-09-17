@@ -98,7 +98,7 @@ console.log('PASS gesture gate, two independent engines, shared pause, second-pl
 const cueSignatures = new Set();
 const cueAudio = new env.AR.Audio();
 cueAudio.unlocked = true;
-for (const item of ['ink', 'torpedo', 'torpedoHit', 'net', 'siphon', 'riptide', 'shield', 'turbo', 'magnet', 'anchor', 'gravity', 'jet']) {
+for (const item of ['ink', 'torpedo', 'torpedoHit', 'net', 'siphon', 'riptide', 'shield', 'turbo', 'magnet', 'anchor', 'gravity', 'jet', 'geyser']) {
   const notes = [];
   cueAudio.tone = (...args) => notes.push(['tone', ...args]);
   cueAudio.noise = (...args) => notes.push(['noise', ...args]);
@@ -109,10 +109,10 @@ for (const item of ['ink', 'torpedo', 'torpedoHit', 'net', 'siphon', 'riptide', 
   audio.play(item);
   assert.ok(audio.voices.size > 0 && audio.voices.size <= 5, item + ' creates bounded disposable voices');
 }
-assert.equal(cueSignatures.size, 12, 'every item and the torpedo explosion have distinct sounds');
+assert.equal(cueSignatures.size, 13, 'every item and the torpedo explosion have distinct sounds');
 cueAudio.setMuted(true);
 let mutedNotes = 0;
 cueAudio.tone = cueAudio.noise = () => mutedNotes++;
 cueAudio.play('anchor');
 assert.equal(mutedNotes, 0);
-console.log('PASS all nine item cues and distinct torpedo explosion, voice bounds, and mute');
+console.log('PASS all twelve item cues and distinct torpedo explosion, voice bounds, and mute');

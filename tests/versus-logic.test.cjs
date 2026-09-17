@@ -101,9 +101,10 @@ test('Larger gaps favour overtaking items; even starts and leaders retain ordina
     const even = draws(index, 0), leader = draws(index, -80);
     assert.deepEqual(even, leader, 'Starting-grid offset must not confer stronger items');
     const close = draws(index, 10), medium = draws(index, 20), far = draws(index, 60);
-    assert(far.turbo >= 450, 'At least half of far-behind crates give a speed boost');
+    assert(far.turbo >= 340, 'Far-behind crates retain a strong speed boost weight');
     assert(far.turbo > medium.turbo && medium.turbo > close.turbo);
-    assert.equal((far.turbo || 0) + (far.torpedo || 0) + (far.net || 0), 900);
+    assert.equal((far.turbo || 0) + (far.torpedo || 0) + (far.net || 0) + (far.geyser || 0) + (far.riptide || 0), 900);
+    assert(far.riptide >= 120 && medium.riptide >= 120 && leader.geyser > 0 && far.geyser > 0);
     assert(!medium.anchor && !medium.shield && !medium.magnet);
     v.matchConfig.mode = 'pearl'; assert(draws(index, 20).magnet > 0);
     v.matchConfig.mode = 'race';

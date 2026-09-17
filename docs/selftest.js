@@ -126,6 +126,7 @@
         for (let i = 0; i < 180; i++) rover.step({}, DT);
         rover.oxygen = rover.maxOxygen;
         const startX = rover.x;
+        const hazards = stage.id === 'whale' ? new AR.WorldHazards(terrain) : null;
         let maxX = startX, brakeSteps = 0, airTime = 0, touchedVent = false, firstVentAir = 0;
         for (let frame = 0; frame < 40 / DT; frame++) {
           const angle = Math.atan2(Math.sin(rover.angle), Math.cos(rover.angle));
@@ -136,7 +137,9 @@
           // 0.9 s gas / 0.3 s coast; an 0.15 s brake tap replaces gas and
           // repeats if the nose still needs correction when the tap finishes.
           touchedVent = touchedVent || terrain.vent(rover.x) > 0;
+          terrain.stepWorld([rover], DT);
           rover.step({ throttle: frame % 144 < 108 && !brake, brake: brake }, DT);
+          if (hazards) hazards.step([rover], DT);
           finite(rover);
           maxX = Math.max(maxX, rover.x);
           if (!rover.grounded && !rover.bodyGrounded) airTime += DT;
@@ -167,7 +170,7 @@
         }
       }
       assert(worst < 3, 'High-speed penetration ' + worst.toFixed(3) + ' px');
-      return '30 combinations; 1600 px/s forward + 1000 px/s downward; max penetration ' + worst.toFixed(3) + ' px';
+      return '45 combinations; 1600 px/s forward + 1000 px/s downward; max penetration ' + worst.toFixed(3) + ' px';
     });
     test('Upgrades materially change acceleration, speed, reserve, and burst', function () {
       const base = AR.getStats('rover'), engine = AR.getStats('rover', { engine: 12 });
@@ -348,7 +351,7 @@
       assert(new AR.Terrain(AR.STAGES[0]).height(1300) !== new AR.Terrain(AR.STAGES[1]).height(1300), 'Stages identical');
       assert(new AR.Terrain(AR.STAGES[3]).vent(2590) > 230, 'Heat vents missing');
       assert(Number.isFinite(new AR.Terrain(AR.STAGES[4]).ceiling(100)), 'Ice ceiling missing');
-      return 'six seeded stages sampled through 8 km';
+      return 'nine seeded stages sampled through 8 km';
     });
     test('Oversized frame input is capped and remains finite', function () {
       const rover = new AR.Rover(flatTerrain(), AR.getStats('rover'));

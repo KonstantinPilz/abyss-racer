@@ -46,6 +46,16 @@
     const debug = versus.debug();
     AR.debug = Object.fromEntries(Object.entries(debug).map(([name, fn]) => [name, (...args) => online.active && online.role === 'guest' ? false : fn(...args)]));
     AR.debug.online = online;
+    AR.debug.solo = {
+      scene: () => scene,
+      place: x => {
+        if (versus.active || !Number.isFinite(x)) return false;
+        const r = scene.rover, dx = x - r.x, dy = scene.terrain.height(x) - 51 - r.y;
+        for (const body of [r, ...r.wheels]) { body.x += dx; body.y += dy; body.vx = body.vy = 0; }
+        r.sleeping = false; r.savePrevious(); renderer.soloCamera = {}; return true;
+      },
+      advance: seconds => { if (state === STATES.RUNNING && !versus.active) for (let i = 0; i < Math.ceil(clamp(seconds, 0, 120) / STEP); i++) { if (state !== STATES.RUNNING) break; step(STEP); } return AR.inspect(); }
+    };
   }
 
   function createScene(stageId, vehicleId) {
@@ -148,7 +158,7 @@
         const selected = stage.id === item.id;
         const owned = data.stages.includes(item.id);
         const best = Math.max(0, ...Object.entries(data.bests).filter(([key]) => key.startsWith(item.id + ':')).map(([, value]) => value));
-        return '<article class="item-card stage-card' + (selected ? ' selected' : '') + '"><div class="stage-art" style="--stage-top:' + item.palette.top + ';--stage-bottom:' + item.palette.bottom + ';--stage-sand:' + item.palette.sand + '"><span class="stage-number">SECTOR 0' + (index + 1) + '</span></div><div class="card-kicker"><span>' + format(item.depth) + ' m BELOW THE SURFACE</span></div><h3>' + item.name + '</h3><p>' + item.description + '</p><div class="card-bottom"><span class="card-stat">BEST ' + format(best) + ' m</span>' + costButton('stage', item.id, item.cost, owned, selected).replace('Select ride', 'Explore here') + '</div></article>';
+        return '<article class="item-card stage-card' + (selected ? ' selected' : '') + '"><div class="stage-art" style="--stage-top:' + item.palette.top + ';--stage-bottom:' + item.palette.bottom + ';--stage-sand:' + item.palette.sand + '"><canvas class="stage-thumbnail" data-stage-art="' + item.id + '" aria-label="' + item.name + ' preview"></canvas><span class="stage-number">SECTOR 0' + (index + 1) + '</span></div><div class="card-kicker"><span>' + format(item.depth) + ' m BELOW THE SURFACE</span></div><h3>' + item.name + '</h3><p>' + item.description + '</p><p class="stage-how"><b>How it plays:</b> ' + (item.how || (['reef', 'wreck', 'abyss'].includes(item.id) ? 'Ballast or brake when sharks warn. Survive five encounters for Shark attack.' : 'Ease off over crests and balance your landings.')) + '</p><div class="card-bottom"><span class="card-stat">BEST ' + format(best) + ' m</span>' + costButton('stage', item.id, item.cost, owned, selected).replace('Select ride', 'Explore here') + '</div></article>';
       }).join('') + '</div>';
     } else if (tab === 'achievements') {
       content = '<p class="section-description">Small victories from a big ocean. ' + data.achievements.length + ' of ' + AR.ACHIEVEMENTS.length + ' discoveries made. Rewards arrive after your dive.</p><div class="card-grid">' + AR.ACHIEVEMENTS.map(item => '<article class="item-card achievement-card' + (data.achievements.includes(item.id) ? ' earned' : '') + '"><span class="medal">' + (data.achievements.includes(item.id) ? '✦' : '◇') + '</span><div><h3>' + item.name + '</h3><p>' + item.description + '</p><small>' + (data.achievements.includes(item.id) ? 'DISCOVERED' : '● ' + format(item.reward) + ' PEARL REWARD') + '</small></div></article>').join('') + '</div>';
@@ -162,6 +172,7 @@
   }
 
   function drawThumbnails() {
+    document.querySelectorAll('[data-stage-art]').forEach(canvas => renderer.stageThumbnail(canvas, stageById(canvas.dataset.stageArt)));
     document.querySelectorAll('canvas[data-vehicle]').forEach(canvas => renderer.thumbnail(canvas, canvas.dataset.vehicle));
   }
 
@@ -303,10 +314,12 @@
   function step(dt) {
     const controls = input();
     const rover = scene.rover;
+    scene.terrain.stepWorld([rover], dt);
     rover.step(controls, dt);
     const bitten = rover.sharkBite > 0;
     scene.hazards.step([rover], dt); scene.sharks = scene.hazards.sharks;
-    if (!bitten && rover.sharkBite > 0) { toast('Shark bump! −7 O₂ · jump to dodge'); sound.play('crash'); scene.shake = 4; }
+    if (!bitten && rover.sharkBite > 0) { toast(scene.stage.id === 'whale' ? 'A playful fish pack shove!' : 'Shark bite! −20 O₂ · ballast or brake to dodge'); sound.play('crash'); scene.shake = 10; }
+    run.sharkEncounters = rover.sharkEncounters || 0;
     pendingBurst = false;
     run.maxX = Math.max(run.maxX, rover.x);
     run.distance = (run.maxX - run.startX) * .1;
@@ -429,7 +442,7 @@
     if (dialogFocus && document.contains(dialogFocus)) dialogFocus.focus({ preventScroll: true });
   }
   function howToPlay() {
-    openDialog('<div class="eyebrow">YOUR FIRST EXPEDITION</div><h2 id="dialog-heading">Get your sea legs.</h2><label class="graphics-setting">Graphics<select id="graphics-setting"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label><p>Roll over the seabed, collect pearls, and keep your oxygen topped up. Distance is your score.</p><p id="help-online" class="help-tip"><b>Play on two phones:</b> Create a room and share its four-character code for your friend to join. The host picks the stage.</p><p id="help-catchup" class="help-tip"><b>Overtake your rival:</b> In Versus, crates favour Turbo, Torpedoes and Nets as you fall behind. Stay 60 m behind for 6 seconds with an empty item slot to receive a Turbo Current. Press your Item control when you want the boost! Deliveries are at least 12 seconds apart and wait during respawns.</p><p id="help-new-ocean" class="help-tip"><b>New ocean tricks:</b> Jump onto upper kelp roots and wreck decks, ride bubbling hot springs, and dodge a shark when its warning flashes. Ice tunnels always leave room to pass.</p><p id="help-new-items" class="help-tip"><b>More toys in Versus:</b> Each diver gets their own crate refill every 2 seconds. Jet Drive adds 4 seconds of thrust even in the air; hold Gas or Brake to steer it. Gravity Flip turns your rover upside down for 6 seconds so you can drive along the glowing ceiling, then returns you upright.</p><p id="help-arena" class="help-tip"><b>Bubble Battle:</b> Choose this Versus mode on one keyboard or two phones. Three hits and you’re out. Item fires a slow bubble in your last drive direction; Ballast jumps to dodge, without using oxygen. After 2 minutes, the rover with more hull left wins.</p><div class="control-list"><div class="control-row"><span>Throttle / pitch backward in air</span><kbd>→ / D / W</kbd></div><div class="control-row"><span>Brake, reverse / pitch forward</span><kbd>← / A / S</kbd></div><div class="control-row"><span>Ballast burst · upward thrust</span><kbd>SPACE / ↑</kbd></div><div class="control-row"><span>Pause / mute</span><kbd>P / ESC &nbsp; · &nbsp; M</kbd></div></div><div class="help-pickups"><span><b>● Pearls</b> · 5 each<br><b>● Golden pearls</b> · 100</span><span><b>O₂ tanks</b> · refill 60%<br><b>Treasure chests</b> · 75</span></div><p class="help-tip">On a phone, hold the big pedals with both thumbs. Tap ⇧ to rise. Ballast uses 8 O₂ from your reserve, so save a breath for the next tank.</p><p>Ease off the gas over crests. Tap brake in the air to bring the nose down. Finish flips for +100 pearls. Balance your rover before landing: a hard impact on the pilot’s dome ends the dive. Upgrades and new worlds await in the garage.</p>');
+    openDialog('<div class="eyebrow">YOUR FIRST EXPEDITION</div><h2 id="dialog-heading">Get your sea legs.</h2><label class="graphics-setting">Graphics<select id="graphics-setting"><option value="crisp">Crisp (default)</option><option value="performance">Performance</option></select></label><p>Roll over the seabed, collect pearls, and keep your oxygen topped up. Distance is your score.</p><p id="help-online" class="help-tip"><b>Play on two phones:</b> Create a room and share its four-character code for your friend to join. The host picks the stage.</p><p id="help-catchup" class="help-tip"><b>Overtake your rival:</b> In Versus, crates favour Turbo, Torpedoes and Nets as you fall behind. Stay 60 m behind for 6 seconds with an empty item slot to receive a Turbo Current. Press your Item control when you want the boost! Deliveries are at least 12 seconds apart and wait during respawns.</p><p class="help-tip"><b>Treasure Tug:</b> Carry the shared chest for 20, 30 or 45 seconds. It slows you 12%; crashes, torpedoes, geysers and hard bumps from above drop it. A 300 m separation returns it to the midpoint.</p><p class="help-tip"><b>Geyser &amp; Riptide:</b> Bubbles warn for 0.3 s before Geyser throws your rival into the air. Shield blocks it. Riptide reverses drive controls for 5 s; purple pedals and ⇄ mark the reversed controls. Jellyfish Net halves throttle and top speed for 4 s.</p><p id="help-new-ocean" class="help-tip"><b>New ocean tricks:</b> Jump onto upper kelp roots and wreck decks, ride bubbling hot springs, and dodge a shark when its warning flashes. Ice tunnels always leave room to pass.</p><p id="help-new-items" class="help-tip"><b>More toys in Versus:</b> Each diver gets their own crate refill every 2 seconds. Jet Drive adds 4 seconds of thrust even in the air; hold Gas or Brake to steer it. Gravity Flip turns your rover upside down for 6 seconds so you can drive along the glowing ceiling, then returns you upright.</p><p id="help-arena" class="help-tip"><b>Bubble Battle:</b> Choose this Versus mode on one keyboard or two phones. Three hits and you’re out. Item fires a slow bubble in your last drive direction; Ballast jumps to dodge, without using oxygen. After 2 minutes, the rover with more hull left wins.</p><div class="control-list"><div class="control-row"><span>Throttle / pitch backward in air</span><kbd>→ / D / W</kbd></div><div class="control-row"><span>Brake, reverse / pitch forward</span><kbd>← / A / S</kbd></div><div class="control-row"><span>Ballast burst · upward thrust</span><kbd>SPACE / ↑</kbd></div><div class="control-row"><span>Pause / mute</span><kbd>P / ESC &nbsp; · &nbsp; M</kbd></div></div><div class="help-pickups"><span><b>● Pearls</b> · 5 each<br><b>● Golden pearls</b> · 100</span><span><b>O₂ tanks</b> · refill 60%<br><b>Treasure chests</b> · 75</span></div><p class="help-tip">On a phone, hold the big pedals with both thumbs. Tap ⇧ to rise. Ballast uses 8 O₂ from your reserve, so save a breath for the next tank.</p><p>Ease off the gas over crests. Tap brake in the air to bring the nose down. Finish flips for +100 pearls. Balance your rover before landing: a hard impact on the pilot’s dome ends the dive. Upgrades and new worlds await in the garage.</p>');
     $('graphics-setting').value = save.data.settings.graphics;
     $('graphics-setting').onchange = e => { save.data.settings.graphics = e.target.value; save.save(); renderer.setGraphics(e.target.value); };
   }

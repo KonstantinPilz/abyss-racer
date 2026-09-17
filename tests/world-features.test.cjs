@@ -132,7 +132,7 @@ test('Jet thrust works in either air direction independent of chassis angle with
   }
 });
 
-test('Sharks telegraph, can be dodged, bite nonlethally and respect victim cooldowns', () => {
+test('Sharks telegraph, can be dodged, cost 20 oxygen and respect victim cooldowns', () => {
   const terrain = flat(), hazards = new AR.WorldHazards(terrain), rover = new AR.Rover(terrain, AR.getStats('rover'));
   place(rover, 2200, 345);
   for (let i = 0; i < 240; i++) hazards.step([rover], DT);
@@ -149,8 +149,8 @@ test('Sharks telegraph, can be dodged, bite nonlethally and respect victim coold
   for (let i = 0; i < 160; i++) hazards.step([rover], DT);
   assert.equal(rover.oxygen, before, 'Ballast-height dodge was hit');
   Object.assign(shark, { phase: 'lunge', timer: 1, x: rover.x - 10, y: rover.y, vx: 235, vy: 0, direction: 1 });
-  rover.oxygen = 3; hazards.step([rover], DT);
-  assert.equal(rover.oxygen, 1); assert.equal(rover.crashed, ''); assert(rover.vx === 65 && rover.vy === -35);
+  rover.oxygen = 30; rover.savePrevious(); hazards.step([rover], DT);
+  assert.equal(rover.oxygen, 10); assert.equal(rover.crashed, ''); assert(rover.vx === 180 && rover.vy === -65);
   const vx = rover.vx;
   Object.assign(shark, { phase: 'lunge', timer: 1, x: rover.x - 10, y: rover.y }); hazards.step([rover], DT);
   assert.equal(rover.vx, vx, 'Cooldown allowed an immediate second bite');

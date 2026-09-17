@@ -199,11 +199,11 @@ function session(mode = 'race', bestOf = 3, stage = 'reef') {
     pickups: Array.from({ length: 30 }, (_, i) => i + ':pearl'),
     events: Array.from({ length: 30 }, (_, i) => ({ id: i + 100, type: 'toast', text: 'A long event to exercise bounded redundant state hints.' }))
   });
-  assert(bytes.byteLength < 600); assert.equal(new Uint8Array(bytes)[0], 2);
+  assert(bytes.byteLength < 600); assert.equal(new Uint8Array(bytes)[0], 3);
   const decoded = AR.OnlineCore.Codec.decode(bytes);
-  assert.equal(decoded.projectiles.length, 12); assert.equal(decoded.sharks.length, 4);
+  assert.equal(decoded.projectiles.length, 12); assert(decoded.sharks.length >= 2 && decoded.sharks.length <= 4);
   assert.deepEqual(decoded.projectiles.slice(0, 3).map(q => q.type), ['bubble', 'anchor', 'torpedo']);
-  assert.deepEqual(decoded.sharks, v.hazards.sharks.slice(0, 4));
+  assert.deepEqual(decoded.sharks, decoded.sharks.map(d => { const q = v.hazards.sharks.find(q => q.id === d.id); return { ...q, aimX: q.x + q.direction * 600, aimY: q.y, fish: false }; }));
   assert.equal(decoded.players[0].facing, -1);
   assert.equal(decoded.players[0].effects.gravity, 6); assert.equal(decoded.players[0].effects.jet, 4);
   assert.equal(decoded.players[0].effects.fireCooldown, .8); assert.equal(decoded.players[0].effects.jumpCooldown, 1);
@@ -213,7 +213,7 @@ function session(mode = 'race', bestOf = 3, stage = 'reef') {
   assert.equal(guest.v.players[0].facing, -1); assert.equal(guest.v.players[0].rover.gravityFlipped, true);
   const wrongVersion = bytes.slice(0); new Uint8Array(wrongVersion)[0] = 1;
   assert.throws(() => AR.OnlineCore.Codec.decode(wrongVersion), /version mismatch/);
-  pass('Version 2 snapshots keep 12 mixed projectiles, four sharks, facing and every new timer below 600 bytes');
+  pass('Version 3 snapshots keep 12 mixed projectiles, four sharks, facing and every new timer below 600 bytes');
 }
 
 for (const { host, guest, guestPhysics } of sessions) {

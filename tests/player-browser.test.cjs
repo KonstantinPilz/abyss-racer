@@ -88,7 +88,7 @@ const paint = page => page.evaluate(() => new Promise(resolve => requestAnimatio
       await page.goto(url);
       await page.evaluate(() => {
         const n = AR.debug.online, pair = AR.LoopbackTransport.pair();
-        n.open(); n.attach('host', pair[0]); n.state = 'LOBBY'; n.protocolReady = true;
+        n.open(); n.attach('host', pair[0]); n.state = 'LOBBY'; n.protocolReady = true; n.peer(1).ready = true;
         n.v.config.mode = 'arena'; n.ui.render();
       });
       assert.equal(await page.$eval('#online-option-mode', n => n.value), 'arena');

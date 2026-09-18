@@ -95,21 +95,21 @@ FIX2 rendering: `.setGraphics('crisp'|'performance')` applies a fixed density (C
 
 ## Online Versus (round 3)
 
-Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.3.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
+Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.4.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
 
 `new AR.Online(versus, {headless, now, ui})` decorates the existing versus controller while online is active. UI-free tests suppress only the versus presentation methods, as the existing logic fixture does. `attach('host'|'guest', transport, code)` binds a transport; `connected()` starts its handshake. The guest never calls `Rover.step`, `Versus.step`, pickup collection, projectile simulation, or match adjudication. `Versus.tick(dt, true)` is the host's unmodified fixed-step loop. Optional hooks in versus route online input, UI, phase and effect notifications; disabling `network` restores local mode.
 
-Transport interface: `.on('open'|'close'|'error'|'data', callback)`, `.send(data, 'events'|'state')`, `.reconnect()`, `.close()`, `.connected`. Data callbacks receive `{data, channel}`. `AR.PeerTransport(role, code).start()` lazily injects PeerJS 1.5.4 and uses the public default broker plus specified STUN/TURN. Host IDs are `abyss-CODE`. Only the invited peer can reconnect after the first guest is admitted. Ordered `events` and unordered `state` both serialize binary; PeerJS 1.5.4 does not expose an unreliable retransmit limit. State backpressure is capped and old sequence numbers are discarded.
+Transport interface: `.on('open'|'close'|'error'|'data', callback)`, `.send(data, 'events'|'state')`, `.reconnect()`, `.close()`, `.connected`. Data callbacks receive `{data, channel}`. `AR.PeerTransport(role, code).start()` lazily injects PeerJS 1.5.4 and uses the public default broker plus specified STUN/TURN. Host IDs are `abyss-CODE`. Two guest seats are reserved by peer ID and token. A seat retains its index across reconnects. Newcomers are rejected after the match starts or when both seats are occupied. Ordered `events` and unordered `state` both serialize binary; PeerJS 1.5.4 does not expose an unreliable retransmit limit. State backpressure is capped and old sequence numbers are discarded.
 
 `AR.LoopbackTransport.pair({latency=40, jitter=10, loss=0, seed=7})` returns two independent endpoints with shared deterministic scheduling. `.pump(ms)` advances network time and dispatches all due messages in order; reliable events are never lost, and state can be dropped/reordered. `.drop()` cuts both ends and discards in-flight packets; `.reconnect()` reopens both. Tests supply `now: () => transport.wire.now` and tick controllers separately. This implements the headless alternative to a two-renderer `?online=loopback` page.
 
 Input packets include `{type:'input', epoch, round, seq, t, throttle, brake, burst, item, b, i}`. `b`/`i` are cumulative burst/item edge counters. They survive lost/reordered updates and quick taps between samples; the host consumes edges once per physics step. Held values expire after 400 ms. Periodic input targets 30 Hz, with immediate reliable packets on control changes/cancellation. Inputs for other epochs/rounds are ignored. Keyboard aliases and touch share the same source.
 
-Snapshots are binary ArrayBuffers, protocol byte 3, at 20 Hz. Codec exports: `AR.OnlineCore.Codec.encode(versus, sequence, timestampMs, epoch, edgeAck, {pickups,events})` and `.decode(buffer)`. Header contains epoch, sequence, time, round, phase/countdown time, match time, scores, input edge acknowledgements and flash/shake. Two rover records carry int32 centimetre positions, int16 velocity, uint16 orientation/wheel angles, relative int16 wheel offsets, oxygen/cooldown, respawn kind/crash reason, flags, item/charges, lives/blackouts/crashes/items used/pearls/distance, and 23 quantized effects plus Round 5 state detailed below. Projectile IDs persist within a round. At most 12 projectiles within 2,600 pixels of either rover are included; simulation/projectile lifetime is never capped. Remaining space contains redundant pickup/event hints, trimmed before 590 payload bytes. Full pickup/events travel on the ordered channel, with epoch/round gates. The guest’s event ledger handles out-of-order hints exactly once, and its collected ledger survives sector pruning.
+Snapshots are binary ArrayBuffers, protocol byte 4, at 20 Hz. Codec exports: `AR.OnlineCore.Codec.encode(versus, sequence, timestampMs, epoch, edgeAck, {pickups,events})` and `.decode(buffer)`. Header contains epoch, sequence, time, round, phase/countdown time, match time, scores, input edge acknowledgements and flash/shake. Two or three rover records carry int32 centimetre positions, int16 velocity, uint16 orientation/wheel angles, relative int16 wheel offsets, oxygen/cooldown, respawn kind/crash reason, flags, item/charges, lives/blackouts/crashes/items used/pearls/distance, and 23 quantized effects plus Round 5 state detailed below. Projectile IDs persist within a round. At most 12 projectiles within 2,600 pixels of either rover are included; simulation/projectile lifetime is never capped. Remaining space contains redundant pickup/event hints, trimmed before 590 payload bytes. Full pickup/events travel on the ordered channel, with epoch/round gates. The guest’s event ledger handles out-of-order hints exactly once, and its collected ledger survives sector pruning.
 
 `SnapshotBuffer` keeps a bounded history covering the 100 ms render buffer. Its time cursor never moves backward, old poses are rejected, rover/wheel angles interpolate via shortest arc, projectile IDs match across frames, and extrapolation ends at 150 ms. Crash/respawn/out transitions use the new pose directly. Guest presentation uses the existing renderer at full viewport with camera alpha 1; host uses normal physics interpolation. All HUD/results data originate at the host.
 
-Reliable messages: version handshake, lobby config/revision/readiness, round initialization, phase/totals/results, pause/resume, delta batches, reconnect state/ack, leave, ping/pong and heartbeats. Ping updates every 2 seconds; heartbeats run every 500 ms and two silent seconds trigger reconnect. An attempt times out at 15 seconds; reconnection gets a fixed 15-second deadline that repeated failures cannot extend. Recovery recreates PeerJS data channels, restores the complete paused world and collected IDs, acknowledges it, then resumes only if play was not manually paused. Reconnect does not reload the page, migrate hosts or replay old transient sounds. Abandoned unfinished matches are not tallied. Each completed epoch is saved once on each browser.
+Reliable messages: version handshake, lobby config/revision/readiness, round initialization, phase/totals/results, pause/resume, delta batches, reconnect state/ack, leave, ping/pong and heartbeats. Ping updates every 2 seconds; heartbeats run every 500 ms and five silent seconds trigger recovery. An attempt times out at 15 seconds; reconnection gets a fixed 15-second deadline that repeated failures cannot extend. Recovery retains live data channels and only recreates broken channels, restores the complete paused world and collected IDs, acknowledges it, then resumes only if play was not manually paused. Reconnect does not reload the page, migrate hosts or replay old transient sounds. Abandoned unfinished matches are not tallied. Each completed epoch is saved once on each browser.
 
 Normal inspect extends versus with `state: 'ONLINE_' + phaseOrScreen` and `online: {role,state,code,epoch,rtt,error,abandoned,snapshotBytes,maxSnapshotBytes,metrics,input,pickups,transport}`. Debug mode additionally exposes `AR.debug.online`; other mutation/debug hooks reject guest calls. Host hooks retain their local meanings. Sequence/phase snapshots and application RTT use monotonic milliseconds, not physics ticks.
 
@@ -132,7 +132,7 @@ New held items `gravity`/`jet` set user `effects.gravity=6` / `effects.jet=4`; e
 
 Arena mode calls `Terrain.setArena()` (bounds 0–1800, roof y=40, shallow seabed mounds). `player.facing` is +/-1 from last horizontal input. Item fires a 340 px/s straight `bubble`, 4 s lifetime, 0.8 s `effects.fireCooldown`; Ballast becomes a 1 s `effects.jumpCooldown` jump with no oxygen drain. `lives` is remaining hull, starting at 3; bullets and hull crashes cost one, 1.2 s safe respawn follows surviving damage, and 1.5 s spawn shielding blocks repeats. Final hits eliminate; simultaneous final losses tie. At 120 s compare hull, ties replay. Race pickups, sharks, catch-up and slipstream are disabled. Existing local/online inputs, rounds, results, and tally persistence apply.
 
-Protocol v3 preserves facing, gravity/jet/cannon timers, bubble types, and up to four sharks, and adds the Round 5 state below. Old clients fail the existing version handshake and are asked to reload. Browser regression tests use `/home/ubuntu/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell`; tests never submit suggestions. Gameplay selection prevention covers HUD/body/pedals with the WebKit prefix and selectstart/contextmenu cancellation while inputs, textareas and copyable room information remain selectable.
+Protocol v4 preserves facing, gravity/jet/cannon timers, bubble types, and up to four sharks, and adds the Round 5 state below. Old clients fail the existing version handshake and are asked to reload. Browser regression tests use `/home/ubuntu/.cache/ms-playwright/chromium_headless_shell-1243/chrome-headless-shell-linux-arm64/chrome-headless-shell`; tests never submit suggestions. Gameplay selection prevention covers HUD/body/pedals with the WebKit prefix and selectstart/contextmenu cancellation while inputs, textareas and copyable room information remain selectable.
 
 
 ## Round 5 / 3.3.0 contract (supersedes earlier shark/protocol notes)
@@ -189,7 +189,7 @@ or ordinary `Shark bite` crash. Fish only shove, without oxygen/crash damage.
 Successful survival increments `rover.sharkEncounters`. `finishRun` preserves the
 maximum per-run count as `totals.sharkEncounters`; five earns `shark-attack` once.
 
-Binary protocol version is **3**; all peers require matching `AR.VERSION`.
+Binary protocol version is **4**; all peers require matching `AR.VERSION`.
 Snapshots include geyser warning/column timers and origins, reversed controls,
 environment flags, carry times/steals, chest position/owner/lockout, up to six nearby
 bridge trigger times, and up to two nearest sharks per player with committed aim
@@ -204,3 +204,41 @@ New executable suites: `round5-mechanics.test.cjs`, `round5-online.test.cjs`,
 `/tmp/abyss-r5-*` and asserts console silence during real guest rendering. Debug-only
 `AR.debug.solo.scene()`, `.place(x)`, `.advance(seconds)` support solo QA; competitive
 mutation hooks remain blocked on the guest. Run every suite serially via the runner.
+
+## Three-phone rooms and phone stability (3.4.0)
+
+Local Versus stays two-player. Online `config.vehicles`, readiness, scores, totals,
+players and cameras have two or three entries. P3 joins automatically before start;
+joining clears readiness. All existing modes, pairwise contacts, shared pickups,
+per-player crates, item targeting, round ties and results work for either size.
+`Versus.rival(p)` chooses the nearest active opponent (ties by index); projectiles
+can strike any opponent. Catch-up uses leader progress; slipstream checks both
+rivals. Pairwise ghost sets preserve each overlap's hysteresis independently.
+
+Host transport `open`/`close` events supply guest index 1/2; `data` includes
+`{data,channel,index}`. `send(data,channel,index)` targets a guest; omitting index
+broadcasts. Each seat owns two channels, an input receiver, version handshake,
+heartbeat and event ACK. State snapshots are encoded per guest for independent
+input acknowledgements. Protocol 4 adds the player count before epoch, variable
+scores/poses and two-bit projectile owners (type bits 4/8); up to six sharks fit
+within the unchanged 1200-byte maximum. Guests never simulate physics.
+
+`finishVersus(winner,3)` stores a separate optional `versus.trio` tally with three
+win counters and match count; default two-player calls/schema are preserved.
+All peers save a completed epoch once; abandoned matches do not change tallies.
+
+At 400 ms input expires. Five seconds of silence pauses the whole room, allowing
+15 seconds to recover. Live data channels survive heartbeat/signalling gaps;
+only actually failed channels redial, preserving other guests. Recovery IDs
+make delayed duplicate syncs idempotent. All missing guests must acknowledge
+before automatic resume, and an existing manual pause stays paused. No reload,
+new service, endpoint, library or external asset was added.
+
+Renderer sprite caches share a 24 MiB retained RGBA budget on phones (coarse
+pointer or width at most 620 px), 96 MiB on desktop, apart from a single larger
+current sprite. The desktop budget preserves the split-screen tile working set. Eviction closes bitmaps or shrinks HTMLCanvas backing to
+1×1; transferred OffscreenCanvas storage is also released. Hidden pages clear
+caches, and same-size resizes do not allocate new backing. Crisp density and
+fixed physics are unchanged. `Renderer.cacheUsage()` exposes bytes/budget/count
+for regression checks. Phone/browser suites and screenshots are described in
+README; use Chromium headless shell 1243 at the absolute path above.

@@ -45,6 +45,15 @@ const capped = new (environment({ version: 2, versus: { p1Wins: 1e15, p2Wins: 7.
 assert.deepEqual(plain(capped.finishVersus(0)), { p1Wins: 1e12, p2Wins: 7, matches: 1e12 });
 save.reset();
 assert.deepEqual(plain(new env.AR.Save().data.versus), { p1Wins: 0, p2Wins: 0, matches: 0 });
+const trioEnv = environment(old), trioSave = new trioEnv.AR.Save();
+for (const i of [0, 1, 2, 2]) trioSave.finishVersus(i, 3);
+assert.equal(trioEnv.writes, 4);
+assert.deepEqual(plain(new trioEnv.AR.Save().data.versus), { p1Wins: 0, p2Wins: 0, matches: 0, trio: { wins: [1, 1, 2], matches: 4 } });
+assert.equal(new trioEnv.AR.Save().data.pearls, old.pearls);
+const dirtyTrio = new (environment({ version: 2, versus: { trio: { wins: [-3, '7', 1e15, 10], matches: 4.8 } } }).AR.Save)();
+assert.deepEqual(plain(dirtyTrio.data.versus.trio), { wins: [0, 0, 1e12], matches: 4 });
+trioSave.reset(); assert.equal(new trioEnv.AR.Save().data.versus.trio, undefined);
+console.log('PASS separate trio tally persists all three winners, clamps corrupt values and resets with progress');
 console.log('PASS versus tally migration, sanitization, isolated solo progression, persistence, counter caps, and reset');
 
 let contexts = 0;

@@ -2,12 +2,12 @@
   'use strict';
   const AR = root.AR, C = AR.OnlineCore;
   const KEYS = { KeyA: 'brake', ArrowLeft: 'brake', KeyD: 'throttle', ArrowRight: 'throttle', KeyW: 'burst', ArrowUp: 'burst', Space: 'burst', KeyS: 'item', ArrowDown: 'item' };
-  const validConfig = c => c && ['race', 'survival', 'pearl', 'arena', 'treasure'].includes(c.mode) && (c.carryTarget === undefined || [20, 30, 45].includes(c.carryTarget)) && [500, 1000, 2000].includes(c.target) && [1, 3, 5].includes(c.bestOf) && AR.STAGES.some(s => s.id === c.stage) && Array.isArray(c.vehicles) && c.vehicles.length === 2 && c.vehicles.every(id => AR.VEHICLES.some(v => v.id === id));
+  const validConfig = c => c && ['race', 'survival', 'pearl', 'arena', 'treasure'].includes(c.mode) && (c.carryTarget === undefined || [20, 30, 45].includes(c.carryTarget)) && [500, 1000, 2000].includes(c.target) && [1, 3, 5].includes(c.bestOf) && AR.STAGES.some(s => s.id === c.stage) && Array.isArray(c.vehicles) && [2, 3].includes(c.vehicles.length) && c.vehicles.every(id => AR.VEHICLES.some(v => v.id === id));
   class Online {
     constructor(versus, options = {}) {
       this.v = versus; this.headless = !!options.headless; this.now = options.now || (() => performance.now());
       this.sound = versus.sound; this.active = false; this.role = null; this.state = 'ENTRY'; this.epoch = 0; this.seq = 0; this.eventId = 0;
-      this.source = new C.InputSource(); this.inputs = [new C.InputReceiver(), new C.InputReceiver()];
+      this.source = new C.InputSource(); this.inputs = Array.from({ length: 3 }, () => new C.InputReceiver());
       this.buffer = new C.SnapshotBuffer(); this.ledger = new C.EventLedger(); this.pendingEvents = []; this.journal = []; this.sentPickups = new Set();
       this.watch = new C.ConnectionWatch(this.now()); this.metrics = { snapshots: 0, bytes: 0, maxBytes: 0, rtts: [], events: {}, hitEvents: 0, reconnects: 0, recoveries: 0, invalidPackets: 0 };
       this.held = { throttle: new Set(), brake: new Set() }; this.keys = new Set(); this.ui = options.ui || (this.headless ? { render() {}, show() {}, status() {} } : new AR.OnlineUI(this));
@@ -24,20 +24,21 @@
       this.connect('guest', code);
     }
     connect(role, code) {
-      this.transport?.close(); this.open(); this.role = role; this.index = role === 'host' ? 0 : 1; this.code = code; this.state = 'CONNECTING'; this.error = ''; this.deadline = this.now() + 15000;
+      this.transport?.close(); this.v.config.vehicles = this.v.config.vehicles.slice(0, 2); this.open(); this.role = role; this.index = role === 'host' ? 0 : 1; this.code = code; this.state = 'CONNECTING'; this.error = ''; this.deadline = this.now() + 15000;
       this.attach(role, new AR.PeerTransport(role, code), code); this.ui.render(); this.transport.start();
     }
     attach(role, transport, code = 'TEST') {
       this.role = role; this.index = role === 'host' ? 0 : 1; this.code = code; this.active = this.v.active = true; this.v.network = this; this.transport = transport;
       this.v.sound = { unlock: () => this.sound.unlock(), suspend: () => this.sound.suspend(), setMuted: value => this.sound.setMuted(value), update: (s, dt) => this.sound.update(s, dt), play: name => { this.sound.play(name); this.event('sound', { name }); } };
       this.watch = new C.ConnectionWatch(this.now()); this.abandoned = false; this.lastPing = this.lastBeat = this.lastRetry = -Infinity; this.rtt = null;
-      this.source = new C.InputSource(); this.inputs = [new C.InputReceiver(), new C.InputReceiver()]; this.lobbyRev = 0; this.v.ready = [false, false]; this.protocolReady = false;
+      this.source = new C.InputSource(); this.inputs = Array.from({ length: 3 }, () => new C.InputReceiver()); this.lobbyRev = 0; this.v.ready = this.v.config.vehicles.map(() => false); this.protocolReady = false;
+      this.peers = new Map(); this.recovering = new Set(); this.recoverySerial = 0; this.lastSync = null;
       const current = fn => value => { if (this.active && this.transport === transport) fn(value); };
       transport.on('room', current(code => { this.code = code; if (role === 'host' && this.state === 'CONNECTING') { this.state = 'WAITING'; this.deadline = null; this.ui.render(); } }));
       transport.on('connecting', current(() => { if (this.state === 'WAITING' && !this.deadline) this.deadline = this.now() + 15000; }));
-      transport.on('open', current(() => this.connected()));
-      transport.on('data', current(({ data, channel }) => this.receive(data, channel)));
-      transport.on('close', current(() => this.lost()));
+      transport.on('open', current(index => this.connected(index)));
+      transport.on('data', current(({ data, channel, index }) => this.receive(data, channel, index)));
+      transport.on('close', current(index => this.lost(index)));
       transport.on('error', current(error => {
         this.lastError = error.type;
         if (this.state === 'RECONNECTING') return;
@@ -47,17 +48,23 @@
       }));
       return this;
     }
-    connected() {
+    peer(index = 1) {
+      if (!this.peers.has(index)) this.peers.set(index, { ready: false, last: this.now(), ack: 0 });
+      return this.peers.get(index);
+    }
+    allReady() { return this.role === 'guest' ? this.protocolReady : this.peers.size === this.v.config.vehicles.length - 1 && this.v.config.vehicles.slice(1).every((_, i) => this.peers.get(i + 1)?.ready); }
+    connected(index = 1) {
       this.deadline = null; this.watch.heard(this.now());
-      this.send({ type: 'hello', version: AR.VERSION });
+      if (this.role === 'host') this.peer(index).last = this.now();
+      this.send({ type: 'hello', version: AR.VERSION, index: this.role === 'host' ? index : undefined }, 'events', index);
       if (this.role === 'host') {
-        if (this.v.players.length && this.v.phase !== 'SETUP' && this.state === 'RECONNECTING') this.sendSync();
-        else { this.state = 'LOBBY'; this.watch.recover(this.now()); this.lobby(); }
+        if (this.v.players.length && this.v.phase !== 'SETUP' && this.state === 'RECONNECTING') this.sendSync(index);
+        else { if (this.state !== 'RECONNECTING') { this.state = 'LOBBY'; this.watch.recover(this.now()); } if (index === 1 || this.v.config.vehicles.length === 3) this.lobby(); }
       }
       this.ui.render();
     }
-    send(data, channel = 'events') { return !!this.transport?.send(data, channel); }
-    lobby() { this.send({ type: 'lobby', config: this.v.config, ready: this.v.ready, rev: this.lobbyRev }); this.ui.render(); }
+    send(data, channel = 'events', index) { return !!this.transport?.send(data, channel, index); }
+    lobby() { this.transport.locked = false; this.send({ type: 'lobby', config: this.v.config, ready: this.v.ready, rev: this.lobbyRev }); this.ui.render(); }
     configure(key, value) {
       if (this.state !== 'LOBBY') return;
       if (key === 'vehicle') {
@@ -68,18 +75,18 @@
         if (this.role !== 'host') return;
         const next = { ...this.v.config, [key]: value }; if (!validConfig(next)) return; this.v.config = next;
       }
-      this.v.ready = [false, false]; this.lobbyRev++; this.lobby();
+      this.v.ready = this.v.config.vehicles.map(() => false); this.lobbyRev++; this.lobby();
     }
     ready() {
       this.sound.unlock(); this.wake();
-      if (this.state !== 'LOBBY' || !this.protocolReady) return;
+      if (this.state !== 'LOBBY' || !this.allReady()) return;
       if (this.role === 'host') { this.v.ready[0] = !this.v.ready[0]; this.lobby(); }
-      else this.send({ type: 'ready', value: !this.v.ready[1], rev: this.lobbyRev });
+      else this.send({ type: 'ready', value: !this.v.ready[this.index], rev: this.lobbyRev });
     }
     start() {
-      if (this.role !== 'host' || this.state !== 'LOBBY' || !this.protocolReady || !this.v.ready.every(Boolean) || !this.transport.connected) return;
-      this.epoch++; this.eventId = 0; this.seq = 0; this.journal = []; this.pendingEvents = []; this.ledger = new C.EventLedger();
-      this.state = 'MATCH'; this.lastPhase = ''; this.starting = true; this.v.startMatch(); this.starting = false; this.wake(); this.ui.render(); this.publishPhase(); this.snapshot();
+      if (this.role !== 'host' || this.state !== 'LOBBY' || !this.allReady() || !this.v.ready.every(Boolean) || !this.transport.connected) return;
+      this.epoch++; for (const peer of this.peers.values()) peer.ack = 0; this.eventId = 0; this.seq = 0; this.journal = []; this.pendingEvents = []; this.ledger = new C.EventLedger();
+      this.transport.locked = true; this.state = 'MATCH'; this.lastPhase = ''; this.starting = true; this.v.startMatch(); this.starting = false; this.wake(); this.ui.render(); this.publishPhase(); this.snapshot();
     }
     roundStarted() {
       this.sentPickups = new Set(); this.buffer.reset();
@@ -101,8 +108,8 @@
     applyEvent(e) {
       this.ledger.receive(e, event => {
         this.metrics.events[event.type] = (this.metrics.events[event.type] || 0) + 1;
-        if (event.type === 'crate' && typeof event.key === 'string' && [0, 1].includes(event.index) && Number.isFinite(event.readyAt)) {
-          const cooldown = this.v.crateCooldowns.get(event.key) || [0, 0];
+        if (event.type === 'crate' && typeof event.key === 'string' && [0, 1, 2].includes(event.index) && Number.isFinite(event.readyAt)) {
+          const cooldown = this.v.crateCooldowns.get(event.key) || this.v.players.map(() => 0);
           cooldown[event.index] = Math.max(cooldown[event.index], event.readyAt);
           this.v.crateCooldowns.set(event.key, cooldown);
         }
@@ -123,12 +130,15 @@
       const pickups = [...this.v.collected].filter(key => !this.sentPickups.has(key)); pickups.forEach(key => this.sentPickups.add(key));
       const events = this.pendingEvents.splice(0);
       if (pickups.length || events.length) this.send({ type: 'delta', epoch: this.epoch, round: this.v.round, pickups, events });
-      const remote = this.inputs[1];
-      const bytes = C.Codec.encode(this.v, ++this.seq, this.now(), this.epoch, { b: remote.usedB, i: remote.usedI }, { pickups, events });
-      this.metrics.snapshots++; this.metrics.bytes += bytes.byteLength; this.metrics.maxBytes = Math.max(this.metrics.maxBytes, bytes.byteLength);
-      this.send(bytes, 'state');
+      const seq = ++this.seq;
+      for (let index = 1; index < this.v.players.length; index++) {
+        const remote = this.inputs[index];
+        const bytes = C.Codec.encode(this.v, seq, this.now(), this.epoch, { b: remote.usedB, i: remote.usedI }, { pickups, events });
+        this.metrics.snapshots++; this.metrics.bytes += bytes.byteLength; this.metrics.maxBytes = Math.max(this.metrics.maxBytes, bytes.byteLength);
+        this.send(bytes, 'state', index);
+      }
     }
-    phaseData() { const v = this.v; return { type: 'phase', epoch: this.epoch, round: v.round, phase: v.phase, beforePause: v.beforePause, phaseTime: v.phaseTime, time: v.time, scores: v.scores, totals: v.totals, roundWinner: v.roundWinner, roundReason: v.roundReason, matchWinner: v.matchWinner, roundStats: v.players.map(p => ({ carryTime: p.carryTime, steals: p.steals })) }; }
+    phaseData() { const v = this.v; return { type: 'phase', reconnecting: this.state === 'RECONNECTING', epoch: this.epoch, round: v.round, phase: v.phase, beforePause: v.beforePause, phaseTime: v.phaseTime, time: v.time, scores: v.scores, totals: v.totals, roundWinner: v.roundWinner, roundReason: v.roundReason, matchWinner: v.matchWinner, roundStats: v.players.map(p => ({ carryTime: p.carryTime, steals: p.steals })) }; }
     publishPhase() { this.lastPhase = this.v.phase; this.send(this.phaseData()); if (this.v.phase === 'MATCH_RESULT') this.releaseWake(); this.ui.show(); }
     phase(m) {
       if (m.epoch !== this.epoch || m.round !== this.v.round || !C.PHASES.includes(m.phase)) return;
@@ -136,14 +146,16 @@
       for (const key of ['phase', 'beforePause', 'phaseTime', 'time', 'scores', 'totals', 'roundWinner', 'roundReason', 'matchWinner']) if (m[key] !== undefined) v[key] = structuredClone(m[key]);
       if (Array.isArray(m.roundStats)) m.roundStats.forEach((stats, i) => { if (v.players[i] && Number.isFinite(stats.carryTime + stats.steals)) Object.assign(v.players[i], stats); });
       v.remaining = Math.max(0, (v.matchConfig.mode === 'arena' ? 120 : 90) - v.time);
-      if (this.state === 'RECONNECTING' && this.transport.connected) { this.watch.recover(this.now()); this.state = 'MATCH'; }
+      if (this.state === 'RECONNECTING' && this.transport.connected && !m.reconnecting) { this.watch.recover(this.now()); this.state = 'MATCH'; }
       if (changed) { this.clearInput(); v.show(); }
       if (['ROUND_RESULT', 'MATCH_RESULT'].includes(m.phase)) { v.resultUI(m.phase === 'MATCH_RESULT'); this.ui.show(); }
-      if (m.phase === 'MATCH_RESULT' && !v.matchSaved && [0, 1].includes(m.matchWinner)) { v.save.finishVersus(m.matchWinner); v.matchSaved = true; this.releaseWake(); }
+      if (m.phase === 'MATCH_RESULT' && !v.matchSaved && v.players.some(p => p.index === m.matchWinner)) { v.save.finishVersus(m.matchWinner, v.players.length); v.matchSaved = true; this.releaseWake(); }
       this.ui.status();
     }
-    receive(m, channel = 'events') {
+    receive(m, channel = 'events', index = 1) {
+      if (this.role === 'host' && ![1, 2].includes(index)) return;
       this.watch.heard(this.now());
+      if (this.role === 'host') this.peer(index).last = this.now();
       try {
         if (m instanceof ArrayBuffer) {
           if (this.role !== 'guest' || this.state !== 'MATCH') return;
@@ -155,29 +167,45 @@
           return;
         }
         if (!m || typeof m !== 'object') return;
+        if (m.type === 'roomFull' && this.role === 'guest') { this.fail(m.started ? 'This race has started. Join before the next match starts.' : 'This room already has three divers. Create another room.'); return; }
         if (m.type === 'hello') {
-          if (m.version !== AR.VERSION) { this.fail('Game versions differ. Reload both devices, then create a new room.'); return; }
-          this.protocolReady = true; if (this.role === 'host' && this.state === 'LOBBY') this.lobby(); this.ui.status(); return;
+          if (m.version !== AR.VERSION) { this.fail('Game versions differ. Update each device once, then create a new room.'); return; }
+          this.protocolReady = true;
+          if (this.role === 'host') {
+            this.peer(index).ready = true;
+            if (index === 2 && this.v.config.vehicles.length === 2 && this.v.phase === 'SETUP') {
+              this.v.config.vehicles.push('rover'); this.v.ready = this.v.config.vehicles.map(() => false); this.lobbyRev++;
+            }
+            if (this.v.phase === 'SETUP') {
+              this.recovering.delete(index);
+              if (!this.recovering.size) { this.state = 'LOBBY'; this.watch.recover(this.now()); }
+              this.lobby();
+            }
+          } else if ([1, 2].includes(m.index)) this.index = m.index;
+          this.ui.render(); return;
         }
-        if (m.type === 'ping') { this.send({ type: 'pong', t: m.t }); return; }
+        if (m.type === 'ping') { this.send({ type: 'pong', t: m.t }, 'events', index); return; }
         if (m.type === 'pong') { if (m.t !== this.pingSent) return; this.rtt = Math.max(0, Math.round(this.now() - m.t)); this.metrics.rtts.push(this.rtt); if (this.metrics.rtts.length > 120) this.metrics.rtts.shift(); this.ui.status(); return; }
-        if (m.type === 'beat') { if (this.role === 'host' && Number.isSafeInteger(m.ack)) this.journal = this.journal.filter(e => e.id > m.ack); return; }
-        if (m.type === 'leave') { this.abandon('The other diver left. This match was abandoned.'); return; }
+        if (m.type === 'beat') { if (this.role === 'host' && Number.isSafeInteger(m.ack)) { this.peer(index).ack = Math.max(this.peer(index).ack, m.ack); const floor = Math.min(...[...this.peers.values()].map(p => p.ack)); this.journal = this.journal.filter(e => e.id > floor); } return; }
+        if (m.type === 'leave') { this.abandon('A diver left. This match was abandoned.'); return; }
         if (this.role === 'host') {
           if (m.type === 'input' && this.state === 'MATCH' && m.epoch === this.epoch && m.round === this.v.round) {
-            this.inputs[1].receive(m, this.now()); if (!['COUNTDOWN', 'RUNNING'].includes(this.v.phase)) this.inputs[1].release();
+            this.inputs[index].receive(m, this.now()); if (!['COUNTDOWN', 'RUNNING'].includes(this.v.phase)) this.inputs[index].release();
           }
           if (this.state === 'LOBBY') {
-            if (m.type === 'vehicle' && AR.VEHICLES.some(v => v.id === m.id)) { this.v.config.vehicles[1] = m.id; this.v.ready = [false, false]; this.lobbyRev++; this.lobby(); }
-            if (m.type === 'ready' && m.rev === this.lobbyRev && typeof m.value === 'boolean') { this.v.ready[1] = m.value; this.lobby(); }
+            if (m.type === 'vehicle' && AR.VEHICLES.some(v => v.id === m.id)) { this.v.config.vehicles[index] = m.id; this.v.ready = this.v.config.vehicles.map(() => false); this.lobbyRev++; this.lobby(); }
+            if (m.type === 'ready' && m.rev === this.lobbyRev && typeof m.value === 'boolean') { this.v.ready[index] = m.value; this.lobby(); }
           }
           if (m.type === 'pause') this.pause();
           if (m.type === 'resume') this.resume();
-          if (m.type === 'syncAck' && m.epoch === this.epoch && this.state === 'RECONNECTING') {
-            this.metrics.recoveries++;
-            this.watch.recover(this.now()); this.state = 'MATCH';
-            if (this.resumeAfterReconnect) this.v.resume(true);
-            this.resumeAfterReconnect = false; this.publishPhase(); this.ui.render(); this.snapshot();
+          if (m.type === 'syncAck' && m.epoch === this.epoch && m.syncId === this.recoverySerial) {
+            if (this.state !== 'RECONNECTING') { if (this.state === 'MATCH') this.send(this.phaseData(), 'events', index); return; }
+            this.metrics.recoveries++; this.recovering.delete(index);
+            if (!this.recovering.size) {
+              this.watch.recover(this.now()); this.state = 'MATCH';
+              if (this.resumeAfterReconnect) this.v.resume(true);
+              this.resumeAfterReconnect = false; this.publishPhase(); this.ui.render(); this.snapshot();
+            }
           }
         } else {
           if (m.type === 'lobby' && validConfig(m.config)) { this.v.config = structuredClone(m.config); this.v.ready = m.ready.map(Boolean); this.lobbyRev = m.rev; this.v.phase = 'SETUP'; this.state = 'LOBBY'; this.watch.recover(this.now()); this.ui.render(); }
@@ -185,26 +213,28 @@
           if (m.type === 'phase') this.phase(m);
           if (m.type === 'delta' && m.epoch === this.epoch && m.round === this.v.round) { this.applyPickups(m.pickups); m.events.forEach(e => this.applyEvent(e)); }
           if (m.type === 'sync') {
+            if (this.lastSync && m.epoch === this.lastSync.epoch && m.round === this.lastSync.round && m.syncId <= this.lastSync.id) { this.send({ type: 'syncAck', epoch: this.epoch, syncId: m.syncId }); return; }
             const saved = this.epoch === m.epoch && this.v.matchSaved;
             if (!this.makeRound(m)) return;
             this.v.matchSaved = saved; this.applyPickups(m.collected);
             this.v.crateCooldowns = new Map(m.crateCooldowns || []);
             if (Array.isArray(m.bridges)) { this.v.terrain.bridges = new Map(m.bridges); this.v.terrain.revision++; }
             const s = C.Codec.decode(m.snapshot); this.buffer.push(s, this.now()); this.applySnapshot(s); this.phase(m.phaseData);
-            this.send({ type: 'syncAck', epoch: this.epoch }); this.state = 'RECONNECTING'; this.ui.render();
+            this.lastSync = { epoch: m.epoch, round: m.round, id: m.syncId };
+            this.send({ type: 'syncAck', epoch: this.epoch, syncId: m.syncId }); this.state = 'RECONNECTING'; this.ui.render();
             this.metrics.recoveries++;
           }
         }
       } catch (_) { this.metrics.invalidPackets++; }
     }
-    sendSync() {
+    sendSync(index = 1) {
       const v = this.v;
-      this.send({ type: 'sync', epoch: this.epoch, round: v.round, config: v.matchConfig, scores: v.scores, totals: v.totals, eventFloor: this.eventId, collected: [...v.collected], crateCooldowns: [...v.crateCooldowns], bridges: [...v.terrain.bridges], phaseData: this.phaseData(), snapshot: C.Codec.encode(v, ++this.seq, this.now(), this.epoch) });
+      this.send({ type: 'sync', syncId: this.recoverySerial, epoch: this.epoch, round: v.round, config: v.matchConfig, scores: v.scores, totals: v.totals, eventFloor: this.eventId, collected: [...v.collected], crateCooldowns: [...v.crateCooldowns], bridges: [...v.terrain.bridges], phaseData: this.phaseData(), snapshot: C.Codec.encode(v, ++this.seq, this.now(), this.epoch, { b: this.inputs[index].usedB, i: this.inputs[index].usedI }) }, 'events', index);
     }
     controls(i) { return this.inputs[i].held(this.now()); }
     consumeEdges() {
       this.inputs[0].receive(this.source.packet(this.now()), this.now());
-      for (let i = 0; i < 2; i++) { const e = this.inputs[i].edges(); this.v.pendingBurst[i] ||= e.burst; if (e.item) this.v.useItem(i); }
+      for (let i = 0; i < this.v.players.length; i++) { const e = this.inputs[i].edges(); this.v.pendingBurst[i] ||= e.burst; if (e.item) this.v.useItem(i); }
       this.source.acknowledge(this.inputs[0].usedB, this.inputs[0].usedI);
     }
     control(key, pressed, id = key) {
@@ -250,16 +280,20 @@
     returnLobby() {
       if (this.state === 'RECONNECTING' || !this.transport?.connected) { this.close(); return; }
       if (this.role !== 'host') return;
-      this.v.phase = 'SETUP'; this.state = 'LOBBY'; this.v.ready = [false, false]; this.clearInput(); this.sound.suspend(); this.releaseWake(); this.lobby(); this.show();
+      this.v.phase = 'SETUP'; this.state = 'LOBBY'; this.v.ready = this.v.config.vehicles.map(() => false); this.clearInput(); this.sound.suspend(); this.releaseWake(); this.lobby(); this.show();
     }
-    lost() {
-      if (!this.active || this.state === 'RECONNECTING' || this.abandoned || ['ERROR', 'ENTRY', 'JOIN', 'CONNECTING', 'WAITING'].includes(this.state)) return;
-      this.watch.drop(this.now()); this.state = 'RECONNECTING'; this.clearInput();
+    lost(index = 1) {
+      if (!this.active || this.abandoned || ['ERROR', 'ENTRY', 'JOIN', 'CONNECTING', 'WAITING'].includes(this.state)) return;
+      if (this.role === 'host') this.recovering.add(index);
+      if (this.state === 'RECONNECTING') return;
+      this.recoverySerial++; this.watch.drop(this.now()); this.state = 'RECONNECTING'; this.clearInput();
       this.metrics.reconnects++;
       this.resumeAfterReconnect = this.role === 'host' && ['RUNNING', 'COUNTDOWN', 'ROUND_RESULT'].includes(this.v.phase);
       if (this.resumeAfterReconnect) this.v.pause(true);
+      if (this.role === 'host' && this.v.phase !== 'SETUP') this.publishPhase();
       this.sound.suspend();
-      if (this.transport.resetChannels) { this.transport.connected = false; this.transport.resetChannels(); }
+      // A heartbeat delay can be radio congestion or an iOS scheduling pause.
+      // Leave live channels intact. Only a real transport failure redials them.
       this.ui.render(); this.show();
     }
     fail(reason) { this.deadline = null; this.error = reason; this.state = 'ERROR'; this.transport?.close(); this.sound.suspend(); this.ui.render(); this.show(); }
@@ -267,15 +301,24 @@
     retry() { if (this.role === 'guest') this.connect('guest', this.code); else this.create(); }
     maintain() {
       if (!this.active) return;
-      const now = this.now();
+      const now = this.now(); this.transport?.prunePending?.();
       if (this.deadline && now >= this.deadline) { this.fail('Could not connect within 15 seconds. The broker may be down, or these networks may block TURN relay traffic. Check the code, try Wi-Fi or mobile data, then retry.'); return; }
-      if (['MATCH', 'LOBBY'].includes(this.state) && now - this.watch.last > 2000) this.lost();
+      if (['MATCH', 'LOBBY', 'RECONNECTING'].includes(this.state)) {
+        if (this.role === 'host') { for (const [index, peer] of this.peers) if (now - peer.last > 5000) this.lost(index); }
+        else if (now - this.watch.last > 5000) this.lost();
+      }
       if (this.state === 'RECONNECTING') {
         if (this.watch.poll(now) === 'abandoned') { this.abandon(); return; }
-        if (now - this.lastRetry > 1000) { this.lastRetry = now; this.transport?.reconnect(); }
+        if (now - this.lastRetry > 1000) {
+          this.lastRetry = now; this.transport?.reconnect();
+          if (this.role === 'host') for (const index of this.recovering) {
+            const connected = this.transport.isConnected ? this.transport.isConnected(index) : this.transport.connected;
+            if (connected) { if (this.v.phase === 'SETUP') this.connected(index); else this.sendSync(index); }
+          }
+        }
         this.ui.status();
       }
-      if (!this.transport?.connected) return;
+      if (!this.transport) return;
       if (now - this.lastBeat >= 500) { this.lastBeat = now; this.send({ type: 'beat', ack: this.ledger.floor }); }
       if (now - this.lastPing >= 2000) { this.lastPing = this.pingSent = now; this.send({ type: 'ping', t: now }); }
       this.pumpInput();
@@ -298,14 +341,14 @@
         this.v.explosions = this.v.explosions.filter(e => e.life > 0);
         this.hudClock = (this.hudClock || 0) + dt;
         if (this.hudClock >= .08) { this.v.hud(); this.hudClock = 0; this.ui.status(); }
-        const p = this.v.players[1]; if (p) this.sound.update({ running: this.v.phase === 'RUNNING' && !p.respawn && !p.out, throttle: this.source.throttle, speed: Math.abs(p.rover.vx), oxygenFraction: p.rover.oxygen / p.rover.maxOxygen }, dt);
+        const p = this.v.players[this.index]; if (p) this.sound.update({ running: this.v.phase === 'RUNNING' && !p.respawn && !p.out, throttle: this.source.throttle, speed: Math.abs(p.rover.vx), oxygenFraction: p.rover.oxygen / p.rover.maxOxygen }, dt);
       }
     }
     applySnapshot(s) {
       if (s.round !== this.v.round || s.epoch !== this.epoch) return;
-      const v = this.v;
-      for (let i = 0; i < 2; i++) {
-        const p = v.players[i], incoming = s.players[i]; if (!p) return;
+      const v = this.v, heldItem = v.players[this.index]?.item, heldCharges = v.players[this.index]?.charges;
+      for (let i = 0; i < v.players.length; i++) {
+        const p = v.players[i], incoming = s.players[i]; if (!p || !incoming) return;
         const r = p.rover; Object.assign(p, { ...incoming, rover: r });
         const wheels = r.wheels; Object.assign(r, { ...incoming.rover, wheels });
         wheels.forEach((w, j) => Object.assign(w, incoming.rover.wheels[j])); r.gravityFlipped = p.effects.gravity > 0; r.jetThrust = p.effects.jet > 0 ? 240 : 0; r.savePrevious();
@@ -319,12 +362,13 @@
       if (v.hazards) v.hazards.sharks = s.sharks || [];
       for (const [key, times] of v.crateCooldowns) if (times.every(t => t <= v.time)) v.crateCooldowns.delete(key);
       v.generatePickups();
+      if (heldItem !== v.players[this.index]?.item || heldCharges !== v.players[this.index]?.charges) { v.hud(); this.ui.status(); }
     }
     draw(dt, fallback) {
       const v = this.v;
       if (!v.players.length || !['MATCH', 'RECONNECTING'].includes(this.state)) { v.renderer.draw(fallback, dt, 1); return; }
       const p = v.players[this.index], camera = v.cameras[this.index]; camera.dt = v.phase === 'PAUSED' || this.state === 'RECONNECTING' ? 0 : dt; camera.alpha = this.role === 'host' && v.phase === 'RUNNING' ? Math.min(1, v.accumulator / AR.FIXED_DT) : 1;
-      v.renderer.render({ state: 'RUNNING', terrain: v.terrain, stage: v.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: v.players, mode: v.matchConfig.mode, crateCooldowns: v.crateCooldowns, sharks: v.hazards?.sharks || [], chest: v.chest, pickups: v.pickups, projectiles: v.projectiles, explosions: v.explosions, shake: v.shake, flash: v.flash, time: v.time, headlight: this.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: v.matchConfig.mode === 'race' ? p.startX + v.matchConfig.target * 10 : null }, camera, { x: 0, y: 0, width: v.renderer.width, height: v.renderer.height });
+      v.renderer.render({ state: 'RUNNING', terrain: v.terrain, stage: v.stage, rover: p.rover, vehicle: p.rover.stats, player: p, players: v.players, mode: v.matchConfig.mode, crateCooldowns: v.crateCooldowns, sharks: v.hazards?.sharks || [], chest: v.chest, pickups: v.pickups, projectiles: v.projectiles, explosions: v.explosions, shake: v.shake, flash: v.flash, time: v.time, headlight: this.index === 2 ? '#d6bdff' : this.index ? '#82edff' : '#ffe2a1', particles: [], texts: [], targetX: v.matchConfig.mode === 'race' ? p.startX + v.matchConfig.target * 10 : null }, camera, { x: 0, y: 0, width: v.renderer.width, height: v.renderer.height });
     }
     show() { this.ui.show(); }
     async wake() {
@@ -336,7 +380,7 @@
       this.send({ type: 'leave' }); this.active = false; this.transport?.close(); this.transport = null; this.releaseWake();
       this.v.network = null; this.v.sound = this.sound; this.v.close(); this.ui.show();
     }
-    inspect() { return { role: this.role, state: this.state, code: this.code, epoch: this.epoch, rtt: this.rtt, error: this.error || '', abandoned: this.abandoned, snapshotBytes: this.metrics.snapshots ? Math.round(this.metrics.bytes / this.metrics.snapshots) : 0, maxSnapshotBytes: this.metrics.maxBytes, metrics: structuredClone(this.metrics), input: { throttle: this.source.throttle, brake: this.source.brake, burst: this.source.b, item: this.source.i }, pickups: this.v.collected ? [...this.v.collected] : [], transport: this.transport?.inspect?.() || { kind: 'loopback' } }; }
+    inspect() { return { role: this.role, index: this.index, racers: this.v.config.vehicles.length, state: this.state, code: this.code, epoch: this.epoch, rtt: this.rtt, error: this.error || '', abandoned: this.abandoned, snapshotBytes: this.metrics.snapshots ? Math.round(this.metrics.bytes / this.metrics.snapshots) : 0, maxSnapshotBytes: this.metrics.maxBytes, metrics: structuredClone(this.metrics), input: { throttle: this.source.throttle, brake: this.source.brake, burst: this.source.b, item: this.source.i }, pickups: this.v.collected ? [...this.v.collected] : [], transport: this.transport?.inspect?.() || { kind: 'loopback' } }; }
   }
   AR.Online = Online;
 })(globalThis);

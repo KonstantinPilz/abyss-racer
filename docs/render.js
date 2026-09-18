@@ -5,11 +5,29 @@
   const TAU = Math.PI * 2;
   const glowSprites = new Map();
   const spriteCanvas = () => typeof root.OffscreenCanvas === 'function' ? new root.OffscreenCanvas(1, 1) : document.createElement('canvas');
-  const freezeSprite = canvas => canvas.transferToImageBitmap ? canvas.transferToImageBitmap() : canvas;
-  const releaseSprite = value => { const sprite = value.sprite || value; if (sprite.close) sprite.close(); };
+  const spriteEntries = new Map();
+  // Phones retain at most 24 MiB; desktop split-screen needs a larger working
+  // set so both cameras can reuse tiles without rebuilding them every frame.
+  const coarsePointer = root.matchMedia?.('(pointer: coarse)');
+  const cachePixelBudget = () => (root.innerWidth <= 620 || coarsePointer?.matches ? 6 : 24) * 1024 * 1024;
+  let cachedPixels = 0;
+  const freezeSprite = canvas => {
+    if (!canvas.transferToImageBitmap) return canvas;
+    const bitmap = canvas.transferToImageBitmap(); canvas.width = canvas.height = 1; return bitmap;
+  };
+  const releaseSprite = value => {
+    const sprite = value.sprite || value, entry = spriteEntries.get(sprite);
+    if (entry) { cachedPixels -= entry.pixels; entry.cache.delete(entry.key); spriteEntries.delete(sprite); }
+    if (sprite.close) sprite.close(); else sprite.width = sprite.height = 1;
+  };
   function cacheSprite(cache, key, value, limit) {
-    cache.set(key, value);
-    if (cache.size > limit) { const oldest = cache.keys().next().value; releaseSprite(cache.get(oldest)); cache.delete(oldest); }
+    if (cache.has(key)) releaseSprite(cache.get(key));
+    const sprite = value.sprite || value, pixels = sprite.width * sprite.height;
+    cache.set(key, value); spriteEntries.set(sprite, { cache, key, pixels }); cachedPixels += pixels;
+    if (cache.size > limit) releaseSprite(cache.values().next().value);
+    // Release backing stores explicitly: Safari canvas memory need not be
+    // reclaimed when a Map entry is deleted. Keep the newest sprite drawable.
+    while (cachedPixels > cachePixelBudget() && spriteEntries.size > 1) releaseSprite(spriteEntries.keys().next().value);
   }
   function clearSprites(cache) { for (const value of cache.values()) releaseSprite(value); cache.clear(); }
 
@@ -61,11 +79,18 @@
       this.height = Math.max(1, rect.height || root.innerHeight || 720);
       this.nativeDpr = clamp(root.devicePixelRatio || 1, 1, 2);
       this.dpr = this.graphics === 'performance' ? 1 : this.nativeDpr;
-      this.canvas.width = Math.round(this.width * this.dpr); this.canvas.height = Math.round(this.height * this.dpr);
-      this.lightCanvas.width = this.canvas.width; this.lightCanvas.height = this.canvas.height;
+      const width = Math.round(this.width * this.dpr), height = Math.round(this.height * this.dpr);
+      if (this.canvas.width !== width || this.canvas.height !== height) {
+        this.clearCaches(); this.canvas.width = width; this.canvas.height = height;
+      }
+      if (this.lightCanvas.width !== width || this.lightCanvas.height !== height) { this.lightCanvas.width = width; this.lightCanvas.height = height; }
       if (this.awarenessCanvas) this.resizeAwarenessLayer(rect);
     }
 
+    clearCaches() {
+      for (const cache of [this.chassisCache, this.decorationCache, this.groundCache, this.backdropCache, this.vignetteCache, this.decorationChunks, this.spriteCache]) clearSprites(cache);
+    }
+    cacheUsage() { return { bytes: cachedPixels * 4, budget: cachePixelBudget() * 4, sprites: spriteEntries.size }; }
     setGraphics(value) {
       this.graphics = value === 'performance' ? 'performance' : 'crisp';
       this.resize();
@@ -91,7 +116,8 @@
       rect = rect || this.canvas.getBoundingClientRect();
       layer.style.left = rect.left + 'px'; layer.style.top = rect.top + 'px';
       layer.style.width = this.width + 'px'; layer.style.height = this.height + 'px';
-      layer.width = Math.round(this.width * this.nativeDpr); layer.height = Math.round(this.height * this.nativeDpr);
+      const width = Math.round(this.width * this.nativeDpr), height = Math.round(this.height * this.nativeDpr);
+      if (layer.width !== width || layer.height !== height) { layer.width = width; layer.height = height; }
       this.awarenessRegions.clear();
     }
 
@@ -182,14 +208,12 @@
       this.projectiles(c, scene.projectiles || [], alpha);
       if (versus) {
         const ordered = [...scene.players].sort((a, b) => a.rover.x - b.rover.x);
-        const rear = ordered[0], leader = ordered[1];
-        const overlap = rear && leader && rear.rover.ghosting &&
-          Math.abs(rear.rover.x - leader.rover.x) < (rear.rover.stats.wheelbase + leader.rover.stats.wheelbase) / 2 + rear.rover.stats.radius + leader.rover.stats.radius &&
-          Math.abs(rear.rover.y - leader.rover.y) < 80;
         for (const player of ordered) {
           if (!player.rover || !this.inView(player.rover.x, player.rover.y, 110)) continue;
           c.save(); if (player.out || player.respawn > 0 || player.respawnTimer > 0) c.globalAlpha = .32;
-          else if (overlap && player === rear) c.globalAlpha = .55;
+          else if (player.rover.ghosting && ordered.some(other => other !== player && other.rover.x >= player.rover.x &&
+            Math.abs(player.rover.x - other.rover.x) < (player.rover.stats.wheelbase + other.rover.stats.wheelbase) / 2 + player.rover.stats.radius + other.rover.stats.radius &&
+            Math.abs(player.rover.y - other.rover.y) < 80)) c.globalAlpha = .55;
           this.drawVehicle(c, player.rover, alpha, scene.headlight); c.restore();
           this.playerEffects(c, player, alpha, scene.mode);
         }
@@ -817,7 +841,7 @@
         if (projectile.life <= 0 || !this.inView(projectile.x, projectile.y, 100)) continue;
         const old = projectile.prev || projectile;
         const x = mix(old.x, projectile.x, alpha), y = mix(old.y, projectile.y, alpha);
-        const color = projectile.owner === 1 ? '#7ff8f1' : '#ffd292';
+        const color = projectile.owner === 2 ? '#cfb1ff' : projectile.owner === 1 ? '#7ff8f1' : '#ffd292';
         c.save(); c.translate(x, y);
         if (projectile.type === 'bubble') {
           glow(c, 0, 0, 25, color, .18);
@@ -953,9 +977,9 @@
         const rover = player.rover; if (!rover) continue;
         const old = rover.prev || rover, x = mix(old.x, rover.x, alpha) * this.zoom + camera.tx;
         const y = mix(old.y, rover.y, alpha) * this.zoom + camera.ty;
-        const color = player.index === 1 ? '#83f4ed' : '#ffd092';
+        const color = player.index === 2 ? '#cfb1ff' : player.index === 1 ? '#83f4ed' : '#ffd092';
         if (x >= 35 && x <= w - 35 && y >= 145 && y <= h - 14) {
-          const yy = Math.max(153, y - 61 * this.zoom);
+          let yy = Math.max(153, y - 61 * this.zoom);
           const other = scene.players.find(p => p !== player), otherOld = other.rover.prev || other.rover;
           const otherX = mix(otherOld.x, other.rover.x, alpha) * this.zoom + camera.tx;
           const close = Math.abs(otherX - x) < 44 && Math.abs(other.rover.y - rover.y) * this.zoom < 30;
@@ -964,7 +988,8 @@
             paint.fillStyle = '#0a2632'; roundRect(paint, 1, 1, 34, 20, 8); paint.fill();
             paint.strokeStyle = color; paint.lineWidth = 1; paint.stroke(); paint.fillStyle = color; paint.font = '800 11px system-ui, sans-serif'; paint.textAlign = 'center'; paint.textBaseline = 'middle'; paint.fillText('P' + (player.index + 1), 18, 11);
           }, this.nativeDpr);
-          if (obscured(labelX - 18, yy - 11, 36, 22)) continue;
+          while (areas.some(a => Math.abs(a.x + a.width / 2 - labelX) < a.width / 2 + 20 && Math.abs(a.y + a.height / 2 - yy) < a.height / 2 + 13)) yy += 25;
+          if (yy > h - 14 || obscured(labelX - 18, yy - 11, 36, 22)) continue;
           c.drawImage(label, Math.round(labelX - 18), Math.round(yy - 11), 36, 22);
           areas.push({ x: labelX - 18, y: yy - 11, width: 36, height: 22 });
         } else if (player !== own && player.rover !== scene.rover) {
@@ -972,7 +997,8 @@
           const vertical = x >= 35 && x <= w - 35;
           const label = 'P' + (player.index + 1) + ' ' + (vertical ? y < 145 ? '▲' : '▼' : ahead ? '▶' : '◀') + ' ' + gap + ' m ' + (ahead ? 'ahead' : 'behind');
           const tw = c.measureText(label).width + 24, xx = vertical ? clamp(x, tw / 2 + 10, w - tw / 2 - 10) : ahead ? w - tw / 2 - 12 : tw / 2 + 12;
-          const yy = vertical ? y < 145 ? 155 : h - 44 : clamp(y, 155, h - 46);
+          let yy = vertical ? y < 145 ? 155 : h - 44 : clamp(y, 155, h - 46);
+          if (scene.players.length > 2) yy = 155 + scene.players.filter(p => p !== own).indexOf(player) * 32;
           if (obscured(xx - tw / 2, yy - 14, tw, 28)) continue;
           c.fillStyle = 'rgba(7,29,42,.91)'; roundRect(c, xx - tw / 2, yy - 14, tw, 28, 12); c.fill();
           c.strokeStyle = color; c.lineWidth = 1; c.stroke(); c.fillStyle = color; c.fillText(label, xx, yy);

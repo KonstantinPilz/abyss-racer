@@ -55,8 +55,8 @@
       const u8 = x => put('Uint8', clamp(Math.round(x || 0), 0, 255));
       const u16 = x => put('Uint16', clamp(Math.round(x || 0), 0, 65535));
       const a16 = x => u16((angle(x || 0) + Math.PI) / (2 * Math.PI) * 65535);
-      u8(3); put('Uint32', epoch); put('Uint32', seq); put('Float32', now); u16(v.round); u8(PHASES.indexOf(v.phase));
-      u16(v.phaseTime * 100); put('Float32', v.time); u8(v.scores[0]); u8(v.scores[1]); put('Uint32', ack.b); put('Uint32', ack.i);
+      u8(4); u8(v.players.length); put('Uint32', epoch); put('Uint32', seq); put('Float32', now); u16(v.round); u8(PHASES.indexOf(v.phase));
+      u16(v.phaseTime * 100); put('Float32', v.time); v.scores.forEach(u8); put('Uint32', ack.b); put('Uint32', ack.i);
       u8(v.shake * 255); u8(v.flash * 255);
       for (const p of v.players) {
         const r = p.rover;
@@ -74,7 +74,7 @@
       // Visible projectiles only; the authoritative world is never capped.
       const shots = (v.projectiles || []).filter(q => v.players.some(p => Math.abs(p.rover.x - q.x) < 2600)).slice(0, 12);
       u8(shots.length);
-      for (const q of shots) { u16(q.id); u8((q.type === 'anchor' ? 2 : q.type === 'bubble' ? 4 : 0) | q.owner); put('Int32', Math.round(q.x * 10)); put('Int32', Math.round(q.y * 10)); a16(q.angle || (q.direction < 0 ? Math.PI : 0)); u8(q.life * 10); }
+      for (const q of shots) { u16(q.id); u8((q.type === 'anchor' ? 4 : q.type === 'bubble' ? 8 : 0) | q.owner); put('Int32', Math.round(q.x * 10)); put('Int32', Math.round(q.y * 10)); a16(q.angle || (q.direction < 0 ? Math.PI : 0)); u8(q.life * 10); }
       const visibleSharks = new Map();
       for (const p of v.players) for (const q of [...(v.hazards?.sharks || [])].sort((a, b) => Math.abs(a.x - p.rover.x) - Math.abs(b.x - p.rover.x)).slice(0, 2)) visibleSharks.set(q.id, q);
       const sharks = [...visibleSharks.values()];
@@ -104,9 +104,10 @@
       const d = new DataView(bytes); let o = 0;
       const get = type => { const n = d['get' + type](o, true); o += { Uint8: 1, Uint16: 2, Int16: 2, Uint32: 4, Int32: 4, Float32: 4 }[type]; return n; };
       const u8 = () => get('Uint8'), u16 = () => get('Uint16'), a16 = () => u16() / 65535 * 2 * Math.PI - Math.PI;
-      if (u8() !== 3) throw new Error('Snapshot version mismatch');
-      const s = { epoch: get('Uint32'), seq: get('Uint32'), t: get('Float32'), round: u16(), phase: PHASES[u8()], phaseTime: u16() / 100, time: get('Float32'), scores: [u8(), u8()], ack: { b: get('Uint32'), i: get('Uint32') }, shake: u8() / 255, flash: u8() / 255, players: [] };
-      for (let i = 0; i < 2; i++) {
+      if (u8() !== 4) throw new Error('Snapshot version mismatch');
+      const count = u8(); if (count !== 2 && count !== 3) throw new Error('Invalid racer count');
+      const s = { epoch: get('Uint32'), seq: get('Uint32'), t: get('Float32'), round: u16(), phase: PHASES[u8()], phaseTime: u16() / 100, time: get('Float32'), scores: Array.from({ length: count }, u8), ack: { b: get('Uint32'), i: get('Uint32') }, shake: u8() / 255, flash: u8() / 255, players: [] };
+      for (let i = 0; i < count; i++) {
         const r = { x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), vx: get('Int16'), vy: get('Int16'), wheels: [] };
         for (let j = 0; j < 2; j++) r.wheels.push({ x: r.x + get('Int16') / 10, y: r.y + get('Int16') / 10, angle: a16() });
         r.oxygen = u16() / 100; r.cooldown = u8() / 10; const respawn = u8() / 50; r.crashed = REASONS[u8()] || '';
@@ -118,8 +119,8 @@
         s.players.push(p);
       }
       s.projectiles = []; const n = u8(); if (n > 12) throw new Error('Invalid projectile count');
-      for (let i = 0; i < n; i++) { const id = u16(), flags = u8(); s.projectiles.push({ id, type: flags & 4 ? 'bubble' : flags & 2 ? 'anchor' : 'torpedo', owner: flags & 1, x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), life: u8() / 10 }); }
-      s.sharks = []; const sharks = u8(); if (sharks > 4) throw new Error('Invalid shark count');
+      for (let i = 0; i < n; i++) { const id = u16(), flags = u8(); s.projectiles.push({ id, type: flags & 8 ? 'bubble' : flags & 4 ? 'anchor' : 'torpedo', owner: flags & 3, x: get('Int32') / 10, y: get('Int32') / 10, angle: a16(), life: u8() / 10 }); }
+      s.sharks = []; const sharks = u8(); if (sharks > count * 2) throw new Error('Invalid shark count');
       for (let i = 0; i < sharks; i++) {
         const q = { id: get('Int32'), x: get('Int32') / 10, y: get('Int32') / 10, phase: ['patrol', 'warning', 'lunge', 'recover'][u8()], direction: u8() ? 1 : -1, timer: u8() / 10 };
         q.aimX = q.x + get('Int16'); q.aimY = q.y + get('Int16'); q.fish = !!u8(); s.sharks.push(q);

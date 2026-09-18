@@ -9,7 +9,7 @@ async function checkOnlineHelp(page, opener, label) {
   await page.click(opener);
   assert(await page.$eval('#dialog-overlay', n => !n.hidden), label + ' How-to-play dialog opens');
   const tip = await page.$eval('#help-online', n => n.innerText);
-  assert(/Play on two phones/i.test(tip) && /create a room/i.test(tip) && /share.*four-character code.*join/i.test(tip) && /host picks the stage/i.test(tip), label + ' help explains room sharing, joining, and host stage choice');
+  assert(/Play on two or three phones/i.test(tip) && /create a room/i.test(tip) && /share.*four-character code.*join/i.test(tip) && /host picks the stage/i.test(tip), label + ' help explains room sharing, joining, and host stage choice');
   assert(await page.$eval('#help-online', n => {
     n.scrollIntoView({ block: 'nearest' });
     const r = n.getBoundingClientRect(), card = n.closest('[role="dialog"]'), c = card.getBoundingClientRect();

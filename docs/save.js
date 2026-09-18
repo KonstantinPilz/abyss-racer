@@ -96,6 +96,7 @@
     if (Array.isArray(source.achievements)) data.achievements = Array.from(new Set(source.achievements.filter(id => AR.ACHIEVEMENTS.some(achievement => achievement.id === id))));
     if (record(source.totals)) for (const key of Object.keys(data.totals)) data.totals[key] = number(source.totals[key]);
     if (record(source.versus)) for (const key of Object.keys(data.versus)) data.versus[key] = integer(source.versus[key]);
+    if (record(source.versus?.trio)) data.versus.trio = { wins: [0, 1, 2].map(i => integer(source.versus.trio.wins?.[i])), matches: integer(source.versus.trio.matches) };
     if (record(source.settings)) {
       data.settings.muted = source.settings.muted === true;
       data.settings.graphics = source.settings.graphics === 'performance' ? 'performance' : 'crisp';
@@ -208,7 +209,15 @@
       return newlyEarned;
     }
 
-    finishVersus(winnerIndex) {
+    finishVersus(winnerIndex, playerCount = 2) {
+      if (playerCount === 3) {
+        if (![0, 1, 2].includes(winnerIndex)) return false;
+        const tally = this.data.versus.trio ||= { wins: [0, 0, 0], matches: 0 };
+        tally.wins[winnerIndex] = Math.min(MAX_COUNTER, tally.wins[winnerIndex] + 1);
+        tally.matches = Math.min(MAX_COUNTER, tally.matches + 1); this.save();
+        return { wins: [...tally.wins], matches: tally.matches };
+      }
+      if (playerCount !== 2) return false;
       if (winnerIndex !== 0 && winnerIndex !== 1) return false;
       const tally = this.data.versus;
       const winner = winnerIndex === 0 ? 'p1Wins' : 'p2Wins';

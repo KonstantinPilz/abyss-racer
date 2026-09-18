@@ -8,9 +8,13 @@
   // A tiny suspension hop should not turn a ground pass into a collision.
   AR.roverNearGround = r => !r.crashed && r.vy > -80 && r.wheels.some(w =>
     Math.abs(r.terrain.height(w.x) - w.y - w.radius) < 12);
+  function clearPair(a, b) {
+    a.ghostPeers?.delete(b); b.ghostPeers?.delete(a);
+    a.ghosting = !!a.ghostPeers?.size; b.ghosting = !!b.ghostPeers?.size;
+  }
   AR.clearRoverGhosting = r => {
-    if (r.ghostWith) { r.ghostWith.ghosting = false; r.ghostWith.ghostWith = null; }
-    r.ghosting = false; r.ghostWith = null;
+    for (const other of r.ghostPeers || []) clearPair(r, other);
+    r.ghosting = false;
   };
 
   function circle(rover, index) {
@@ -66,13 +70,14 @@
     const result = { contacts: 0, maxSpeed: 0, hullCrushes: [] };
     if (!a || !b || a === b || a.crashed || b.crashed) return result;
     const separation = Math.abs(a.x - b.x), length = Math.max(roverLength(a), roverLength(b));
-    if (a.ghostWith === b && b.ghostWith === a) {
+    if (a.ghostPeers?.has(b)) {
       if (separation <= length * 1.2) return result;
-      AR.clearRoverGhosting(a);
+      clearPair(a, b);
     }
     if (separation < length && Math.abs(a.y - b.y) < Math.min(roverHeight(a), roverHeight(b)) * .6 &&
         AR.roverNearGround(a) && AR.roverNearGround(b)) {
-      a.ghosting = b.ghosting = true; a.ghostWith = b; b.ghostWith = a;
+      (a.ghostPeers ||= new Set()).add(b); (b.ghostPeers ||= new Set()).add(a);
+      a.ghosting = b.ghosting = true;
       return result;
     }
     const reach = a.stats.wheelbase + b.stats.wheelbase + a.stats.radius + b.stats.radius + 100;

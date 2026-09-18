@@ -263,11 +263,12 @@
       const active = (rovers || []).filter(r => r && !r.crashed && !r.out && !r.respawn), stage = this.terrain.stage.id;
       if (this.terrain.arena || !['reef', 'abyss', 'wreck', 'whale'].includes(stage) || !active.length) { this.sharks = []; return; }
       for (const [id, until] of this.retired) if (until < this.time - 6) this.retired.delete(id);
-      const needed = new Set();
+      // Triple shark-group spacing; Whale Fall's playful fish keep their original cadence.
+      const spacing = stage === 'whale' ? 1700 : 5100, needed = new Set();
       for (const r of active) {
         this.cooldowns.set(r, Math.max(0, (this.cooldowns.get(r) || 0) - dt));
-        for (let cell = Math.max(0, Math.floor((r.x - 3800) / 1700)); cell <= Math.floor((r.x - 1700) / 1700); cell++) {
-          const home = 2850 + cell * 1700 + hash(cell, this.terrain.seed + 208) * 240;
+        for (let cell = Math.max(0, Math.floor((r.x - 3800) / spacing)); cell <= Math.floor((r.x - 1700) / spacing); cell++) {
+          const home = 2850 + cell * spacing + hash(cell, this.terrain.seed + 208) * 240;
           for (let j = 0; j < (['abyss', 'wreck', 'whale'].includes(stage) && cell % 3 === 2 ? 2 : 1); j++) {
             const id = cell * 2 + j, homeX = home + j * 440;
             if (Math.abs(homeX - r.x) > 1350) continue;

@@ -1,5 +1,31 @@
 # Abyss Racer status
 
+## Player suggestion — 3.4.1 complete (2026-09-17)
+
+Interpreted the request as one third as many shark groups over distance. Groups now
+use 5100 px spacing instead of 1700 px in Reef, Wreck and Abyss, in solo and local/
+online Versus. First encounter, seeded jitter, occasional pairs and warning/dodge/
+damage behavior are preserved. Whale Fall's playful fish keep their original
+frequency. No suggestion was skipped; AR.VERSION is 3.4.1.
+
+Validation: `node tests/run-all.cjs` passed all **23 runner entries serially**:
+`node docs/selftest.js`, `node tests/progression.test.js`, every `tests/*.test.cjs`,
+and the rendering benchmark. Browser suites report zero console errors; the live
+PeerJS connection/reconnect test passed. New regressions survey 15,300 m across
+three seeds, confirm one-third density including pairs, and check quiet stretches,
+shared racer spawns, deterministic revisits and unchanged fish. The longer driving
+test reaches two separate encounters: straight driving takes two bites, while
+ballast jumps and hard braking avoid both. Physics code is unchanged.
+
+Personally inspected all four new screenshots from Chromium headless shell 1243:
+quiet stretches and the next natural shark warning at 1280×720 and 393×428 @3.
+The warning, HUD and touch controls remain visible. Physical Safari/iPhone testing
+remains unverified. Evidence: `/tmp/abyss-shark-frequency-all.log`,
+`/tmp/abyss-phones-suites.json`, and `/tmp/abyss-shark-frequency-*.png`.
+Changed scripts pass syntax checks and `git diff --check` passes. `docs/config.js`
+and the noindex tag are unchanged. Player notes: [SUGGESTION_DONE.md](SUGGESTION_DONE.md).
+No deployment performed; no work remains in flight.
+
 ## Player suggestions — 3.4.0 complete (2026-09-17)
 
 Interpreted “playable on three phones” as three friends sharing one online room. Rooms now admit a host and two guests, with independent vehicles, readiness, controls, full-screen views, item acknowledgements and reconnect state. All five modes support three racers, pairwise contacts, nearest-rival attacks, three-way scores/results and a separate saved trio rivalry. P3 uses purple artwork and labels. Extra or late guests receive an explanation without disturbing the room; incomplete connections expire and release their seat. Local Versus remains two-player. Snapshot protocol 4 supports three rovers within the existing 1,200-byte bound.

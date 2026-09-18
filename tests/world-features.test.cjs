@@ -132,6 +132,51 @@ test('Jet thrust works in either air direction independent of chassis angle with
   }
 });
 
+test('Shark density is one third of the previous cadence across seeds, including deeper-stage pairs', () => {
+  for (const seed of [0, 3361, -12345]) {
+    for (const [stage, expected] of [['reef', 30], ['wreck', 40], ['abyss', 40], ['whale', 120]]) {
+      const terrain = flat(AR.STAGES.find(s => s.id === stage)); terrain.seed = seed;
+      const rover = new AR.Rover(terrain, AR.getStats('rover')), homes = new Map();
+      // Survey 15,300 m: previously 90 groups, now 30; fish still have 90.
+      // Fresh instances measure seeded placement independently of attack/retreat timers.
+      for (let x = 1700; x < 154700; x += 100) {
+        place(rover, x, 345);
+        const hazards = new AR.WorldHazards(terrain); hazards.step([rover], 0);
+        for (const shark of hazards.sharks) homes.set(shark.id, shark.homeX);
+      }
+      assert.equal(homes.size, expected, stage + ' seed ' + seed);
+      const groups = [...homes].filter(([id]) => id % 2 === 0).map(([, x]) => x).sort((a, b) => a - b);
+      assert(groups[0] >= 2850 && groups[0] <= 3090, 'First encounter moved');
+      const spacing = stage === 'whale' ? 1700 : 5100;
+      for (let i = 1; i < groups.length; i++) assert(Math.abs(groups[i] - groups[i - 1] - spacing) <= 240, stage + ' group gap');
+      for (const [id, x] of homes) if (id % 2) assert.equal(x - homes.get(id - 1), 440, 'Pair spacing changed');
+    }
+  }
+});
+
+test('Shark-free gaps, deterministic revisits and shared racer spawns preserve the reduced cadence', () => {
+  for (const stage of AR.STAGES) {
+    const terrain = flat(stage), hazards = new AR.WorldHazards(terrain);
+    const rovers = Array.from({ length: 3 }, () => new AR.Rover(terrain, AR.getStats('rover')));
+    const sharks = ['reef', 'wreck', 'abyss'].includes(stage.id);
+    for (const r of rovers) place(r, 2900, 345);
+    hazards.step(rovers, 0);
+    const first = hazards.sharks.map(q => [q.id, q.homeX, q.fish]);
+    assert.equal(first.length, sharks || stage.id === 'whale' ? 1 : 0, stage.id);
+    const initial = first.length ? hazards.sharks[0] : null;
+    hazards.step(rovers, 0);
+    if (initial) assert.equal(hazards.sharks[0], initial, 'Shared racers duplicated a shark');
+    for (const r of rovers) place(r, 5400, 345);
+    // Finish existing encounters before inspecting the next stretch.
+    hazards.sharks.forEach(q => { q.phase = 'patrol'; }); hazards.step(rovers, 0);
+    if (stage.id === 'whale') assert(hazards.sharks.length > 0, 'Fish cadence was reduced');
+    else assert.equal(hazards.sharks.length, 0, stage.id + ' quiet stretch');
+    for (const r of rovers) place(r, 2900, 345);
+    hazards.step(rovers, 0);
+    assert.deepEqual(hazards.sharks.map(q => [q.id, q.homeX, q.fish]), first, stage.id + ' revisit');
+  }
+});
+
 test('Sharks telegraph, can be dodged, cost 20 oxygen and respect victim cooldowns', () => {
   const terrain = flat(), hazards = new AR.WorldHazards(terrain), rover = new AR.Rover(terrain, AR.getStats('rover'));
   place(rover, 2200, 345);

@@ -95,7 +95,7 @@ FIX2 rendering: `.setGraphics('crisp'|'performance')` applies a fixed density (C
 
 ## Online Versus (round 3)
 
-Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.4.0`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
+Static script order after `versus.js`: `online-core.js`, `qr.js`, `online-transport.js`, `online-ui.js`, `online.js`, optional `config.js`, `suggestions.js`, then `game.js`. `AR.VERSION` is `3.4.1`. A comments-only `config.js` keeps the default build self-contained and Suggestions hidden.
 
 `new AR.Online(versus, {headless, now, ui})` decorates the existing versus controller while online is active. UI-free tests suppress only the versus presentation methods, as the existing logic fixture does. `attach('host'|'guest', transport, code)` binds a transport; `connected()` starts its handshake. The guest never calls `Rover.step`, `Versus.step`, pickup collection, projectile simulation, or match adjudication. `Versus.tick(dt, true)` is the host's unmodified fixed-step loop. Optional hooks in versus route online input, UI, phase and effect notifications; disabling `network` restores local mode.
 
@@ -177,8 +177,11 @@ next owner earns a steal. `updateChest(dt)` awards carry time and wins at target
 at most once/second, with a toast on entering that state. `carryTime` and `steals`
 are included in player, round and match statistics.
 
-`WorldHazards(terrain,onBite?)` spawns sharks every ~1700 px after x=2300 in Reef,
-Wreck, Abyss, and fish schools in Whale Fall; deeper stages sometimes get a pair.
+`WorldHazards(terrain,onBite?)` spaces shark groups every ~5100 px after x=2300 in
+Reef, Wreck and Abyss (one third the previous density as of 3.4.1). The first group
+stays at x=2850–3090; seeded jitter remains 240 px. Every third group in Wreck/Abyss
+has a second shark 440 px later. Whale Fall fish keep their ~1700 px group spacing
+and every-third-group pairs. Solo and local/online Versus use the same generator.
 Phases remain `patrol`, `warning`, `lunge`, `recover` (six seconds). Patrol approaches
 at .55× target speed; a .9 s warning commits to the predicted position .5 s beyond
 warning expiry. Hard braking therefore changes arrival without moving the warning

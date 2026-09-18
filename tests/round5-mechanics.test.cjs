@@ -107,11 +107,13 @@ test('Sharks bite a 300 px/s driver within two encounters; an actual ballast jum
   function drive(dodge) {
     const r = rover(), t = r.terrain; t.height = () => 400; t.slope = () => 0; place(r, 2350, 349, 300);
     const h = new AR.WorldHazards(t), warnings = new Set(); let bites = 0, stop = 0;
-    for (let n = 0; n < 1500; n++) {
+    // Reach the second group at the reduced shark frequency, including brake stops.
+    for (let n = 0; n < 4500; n++) {
       const warning = h.sharks.find(q => q.phase === 'warning' && !warnings.has(q.id));
       if (warning) { warnings.add(warning.id); if (dodge === 'brake') stop = 3; }
       const burst = !!warning && dodge === 'jump';
       const speed = stop > 0 ? 0 : 300; stop -= DT;
+      if (speed) { r.sleeping = false; r.sleepTime = 0; }
       r.vx = speed; r.wheels.forEach(w => { w.vx = speed; w.omega = speed / w.radius; });
       r.step({ burst }, DT); const before = r.oxygen; h.step([r], DT); if (r.oxygen < before - 1) bites++;
       if (warnings.size >= 2 && !h.sharks.some(q => q.phase === 'warning' || q.phase === 'lunge')) break;
@@ -120,7 +122,8 @@ test('Sharks bite a 300 px/s driver within two encounters; an actual ballast jum
   }
   const straight = drive('none'), jump = drive('jump'), brake = drive('brake');
   console.log({ straight, jump, brake });
-  assert(straight.bites >= 1 && straight.warnings <= 2); assert.equal(jump.bites, 0); assert.equal(brake.bites, 0); assert(jump.encounters > 0);
+  for (const result of [straight, jump, brake]) assert.equal(result.warnings, 2);
+  assert(straight.bites >= 1); assert.equal(jump.bites, 0); assert.equal(brake.bites, 0); assert(jump.encounters > 0);
 });
 
 test('Swept shark hit tests include the whole chassis and wheels; versus bites crash, shields intercept, fish only shove', () => {

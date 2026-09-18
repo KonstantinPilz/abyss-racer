@@ -1,6 +1,6 @@
 # Abyss Racer
 
-Current release: **3.4.0** · Three-phone crews and connection stability (2026-09-17).
+Current release: **3.4.1** · Sharks one third as frequent (2026-09-17).
 
 A complete underwater driving game made with plain HTML, CSS, Canvas 2D, and WebAudio. Drive a two-wheeled deep-sea rover across an endless seabed, collect pearls and oxygen, balance floaty jumps, and buy new vehicles, worlds, and upgrades. Local keyboard Versus adds a shared physics world, split-screen cameras, five match modes, and twelve competitive items. **Play on 2–3 phones** brings the same rivalry to up to three devices, each with its own full-screen view.
 
@@ -34,7 +34,7 @@ Mouse, keyboard, and touch work in the menus. Garage tabs support arrow keys and
 8. **Whale Fall** (8,600 pearls): an enormous ivory skeleton, solid low rib ceilings, bone ramps, and glowing plankton clouds. Clouds replenish a net +1 oxygen/second while inside. Small fish schools give playful shoves instead of shark bites.
 9. **Thermal Springs** (11,000 pearls): amber water and hot-spring haze, visibly charging vents on four-second cycles, slowing mud pools, and bubble elevators. Hold Ballast inside an elevator to double its lift without spending oxygen.
 
-Sharks appear after 220 m in Coral Reef, Shipwreck Graveyard and Abyssal Trench, roughly every 140–200 m, sometimes in pairs in deeper stages. They approach at 55% of rover speed, warn for 0.9 s with a fin, “! SHARK” and a dashed committed path, then lunge at 1.5× speed (minimum 380 px/s) for at least 600 px. **Jump with ballast or brake hard when warned.** A swept chassis/wheel test prevents tunnelling. A solo bite costs 20 oxygen, shoves the rover and flashes red; it only directly ends the run if oxygen is exhausted. In Versus it causes a normal **Shark bite** crash/respawn; a Bubble Shield blocks it. Sharks retreat for six seconds after a lunge. Survive five encounters in one solo run for the **Shark attack** achievement. Whale Fall replaces sharks with harmless-to-oxygen fish packs. Bubble Battle keeps its clear arena.
+Sharks appear after 220 m in Coral Reef, Shipwreck Graveyard and Abyssal Trench. Shark groups are spaced roughly 490–530 m apart, one third as frequent as before, sometimes in pairs in deeper stages. They approach at 55% of rover speed, warn for 0.9 s with a fin, “! SHARK” and a dashed committed path, then lunge at 1.5× speed (minimum 380 px/s) for at least 600 px. **Jump with ballast or brake hard when warned.** A swept chassis/wheel test prevents tunnelling. A solo bite costs 20 oxygen, shoves the rover and flashes red; it only directly ends the run if oxygen is exhausted. In Versus it causes a normal **Shark bite** crash/respawn; a Bubble Shield blocks it. Sharks retreat for six seconds after a lunge. Survive five encounters in one solo run for the **Shark attack** achievement. Whale Fall replaces sharks with harmless-to-oxygen fish packs. Bubble Battle keeps its clear arena.
 
 The Reef Rover, Crab Crawler, Torpedo Bike, Abyss Truck, and Manta Glider have different masses, wheelbases, tires, torque, buoyancy, oxygen reserves, and handling. Each vehicle owns six independent upgrade tracks: engine, propeller/thrust, suspension, tires, oxygen, and ballast. Each track has 12 purchasable levels with escalating costs.
 
